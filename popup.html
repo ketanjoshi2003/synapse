@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 340px;
+      font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+      background: #0a0a14;
+      color: #e2e2e8;
+      overflow-x: hidden;
+    }
+
+    /* ─── Header ─────────────────────────────────────── */
+    .header {
+      background: linear-gradient(135deg, #12122a 0%, #0e1a2e 50%, #121230 100%);
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid rgba(0, 255, 136, .1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -30%;
+      width: 120px;
+      height: 120px;
+      background: radial-gradient(circle, rgba(0, 255, 136, .08) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-icon {
+      font-size: 20px;
+      filter: drop-shadow(0 0 8px rgba(0, 255, 136, .4));
+    }
+
+    .header h1 {
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #00ff88, #00cc6a);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: 0.5px;
+    }
+
+    .header p {
+      font-size: 11px;
+      color: #6b6b80;
+      margin-top: 4px;
+      font-weight: 400;
+    }
+
+    /* ─── Status Bar ─────────────────────────────────── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      background: rgba(17, 17, 40, .6);
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: all .4s;
+    }
+
+    .dot.on {
+      background: #00ff88;
+      box-shadow: 0 0 8px rgba(0, 255, 136, .6), 0 0 20px rgba(0, 255, 136, .2);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .dot.off {
+      background: #ff6b6b;
+      box-shadow: 0 0 8px rgba(255, 107, 107, .4);
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 8px rgba(0, 255, 136, .6), 0 0 20px rgba(0, 255, 136, .2);
+      }
+
+      50% {
+        box-shadow: 0 0 12px rgba(0, 255, 136, .8), 0 0 30px rgba(0, 255, 136, .3);
+      }
+    }
+
+    .status-info {
+      flex: 1;
+    }
+
+    .status-text {
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-meta {
+      font-size: 10px;
+      color: #555;
+      margin-top: 2px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ─── Section ─────────────────────────────────────── */
+    .section {
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .section label {
+      display: block;
+      font-size: 10px;
+      color: #555;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    .section input {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(26, 26, 50, .8);
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+      transition: border-color .3s, box-shadow .3s;
+      outline: none;
+    }
+
+    .section input:focus {
+      border-color: rgba(0, 255, 136, .3);
+      box-shadow: 0 0 0 3px rgba(0, 255, 136, .06);
+    }
+
+    /* ─── Toggle Row ──────────────────────────────────── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .toggle-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #b0b0c0;
+    }
+
+    .toggle-label span {
+      display: block;
+      font-size: 10px;
+      color: #555;
+      margin-top: 1px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: #2a2a40;
+      border-radius: 20px;
+      transition: background .3s;
+    }
+
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      background: #888;
+      border-radius: 50%;
+      transition: transform .3s, background .3s;
+    }
+
+    .toggle input:checked+.toggle-slider {
+      background: rgba(0, 255, 136, .2);
+    }
+
+    .toggle input:checked+.toggle-slider::before {
+      transform: translateX(16px);
+      background: #00ff88;
+      box-shadow: 0 0 8px rgba(0, 255, 136, .4);
+    }
+
+    /* ─── Buttons ─────────────────────────────────────── */
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .btn {
+      flex: 1;
+      padding: 9px 12px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      transition: all .3s cubic-bezier(.4, 0, .2, 1);
+      letter-spacing: 0.2px;
+    }
+
+    .btn:active {
+      transform: scale(.96);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #00ff88, #00cc6a);
+      color: #0a0a14;
+      box-shadow: 0 4px 16px rgba(0, 255, 136, .15);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 4px 24px rgba(0, 255, 136, .25);
+    }
+
+    .btn-secondary {
+      background: rgba(30, 30, 60, .8);
+      color: #888;
+      border: 1px solid rgba(255, 255, 255, .06);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(40, 40, 70, .9);
+      color: #aaa;
+    }
+
+    /* ─── Stats ───────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .stat-card {
+      background: rgba(20, 20, 45, .6);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, .04);
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      background: linear-gradient(135deg, #00ff88, #00aaff);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      font-size: 9px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 2px;
+    }
+
+    /* ─── Log ─────────────────────────────────────────── */
+    .log-area {
+      padding: 10px 20px 16px;
+    }
+
+    .log-area label {
+      font-size: 10px;
+      color: #555;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    .log-clear {
+      font-size: 9px;
+      cursor: pointer;
+      color: #444;
+      background: none;
+      border: none;
+      font-family: inherit;
+      letter-spacing: 0.5px;
+      transition: color .2s;
+    }
+
+    .log-clear:hover {
+      color: #ff6b6b;
+    }
+
+    #log {
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      max-height: 120px;
+      overflow-y: auto;
+      line-height: 1.8;
+      scrollbar-width: thin;
+      scrollbar-color: #2a2a40 transparent;
+    }
+
+    #log::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #log::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #log::-webkit-scrollbar-thumb {
+      background: #2a2a40;
+      border-radius: 4px;
+    }
+
+    .log-entry {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, .02);
+      animation: fadeIn .3s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .log-icon {
+      font-size: 10px;
+    }
+
+    .log-file {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .log-time {
+      font-size: 9px;
+      color: #444;
+      flex-shrink: 0;
+    }
+
+    .log-empty {
+      color: #333;
+      font-style: italic;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    /* ─── Footer ──────────────────────────────────────── */
+    .footer {
+      padding: 10px 20px;
+      text-align: center;
+      font-size: 9px;
+      color: #333;
+      letter-spacing: 0.5px;
+    }
+
+    .footer a {
+      color: #00ff8866;
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-row">
+      <img src="icons/icon48.png" class="header-icon" alt="Synapse" style="width:24px;height:24px;">
+      <div>
+        <h1>SYNAPSE</h1>
+        <p>The neural link between AI and your codebase</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <div class="dot off" id="statusDot"></div>
+    <div class="status-info">
+      <div class="status-text" id="statusText">Checking connection…</div>
+      <div class="status-meta" id="statusMeta"></div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-value" id="statFiles">0</div>
+      <div class="stat-label">Files Synced</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statPatches">0</div>
+      <div class="stat-label">Patches</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statErrors">0</div>
+      <div class="stat-label">Errors</div>
+    </div>
+  </div>
+
+  <!-- Toggles -->
+  <div class="toggle-row">
+    <div class="toggle-label">
+      Auto-Sync
+      <span>Automatically sync detected code</span>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="autoSyncToggle" checked>
+      <div class="toggle-slider"></div>
+    </label>
+  </div>
+  <div class="toggle-row">
+    <div class="toggle-label">
+      Dry-Run Mode
+      <span>Preview changes without writing</span>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="dryRunToggle">
+      <div class="toggle-slider"></div>
+    </label>
+  </div>
+  <div class="toggle-row">
+    <div class="toggle-label">
+      Git Backup
+      <span>Auto-commit before file changes</span>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="gitBackupToggle">
+      <div class="toggle-slider"></div>
+    </label>
+  </div>
+
+  <!-- Port Config -->
+  <div class="section">
+    <label>Server Port</label>
+    <input type="number" id="portInput" value="3131" />
+  </div>
+
+  <!-- Buttons -->
+  <div class="btn-group">
+    <button class="btn btn-primary" id="saveBtn">Save & Reconnect</button>
+    <button class="btn btn-secondary" id="scanBtn">⟳ Scan Now</button>
+  </div>
+
+  <!-- Log -->
+  <div class="log-area">
+    <label>
+      Activity Log
+      <button class="log-clear" id="clearLogBtn">clear</button>
+    </label>
+    <div id="log">
+      <div class="log-empty">No syncs yet…</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    Synapse v2.0 — Claude · ChatGPT · Gemini · DeepSeek · Copilot · Grok & more
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

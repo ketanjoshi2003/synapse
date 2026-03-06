@@ -1,0 +1,24 @@
+{
+  "name": "synapse",
+  "version": "2.0.0",
+  "description": "Synapse — The neural link between AI and your codebase. Extracts code from AI chats in real-time.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --output .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "code-sync",
+    "claude",
+    "chatgpt",
+    "gemini",
+    "chrome-extension"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}

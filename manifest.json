@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Synapse",
+  "version": "2.0.0",
+  "description": "The neural link between AI and your codebase — extracts code from AI chats in real-time and writes it to your project",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "https://chat.openai.com/*",
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://grok.x.ai/*",
+    "https://poe.com/*",
+    "https://chat.mistral.ai/*",
+    "https://huggingface.co/chat/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://grok.x.ai/*",
+        "https://poe.com/*",
+        "https://chat.mistral.ai/*",
+        "https://huggingface.co/chat/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
