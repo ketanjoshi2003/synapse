@@ -7,6 +7,7 @@ let wsPort = 3131;
 let isConnected = false;
 let autoSync = true;
 let sentHashes = new Set();
+const HASH_STORAGE_KEY = 'synapseHashes';
 let pendingCode = [];
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
@@ -42,9 +43,10 @@ const ASSISTANT_SELECTORS = {
   ],
   chatgpt: [
     '[data-message-author-role="assistant"]',
+    'article[data-testid*="conversation-turn"]',
     '.agent-turn',
-    '[class*="assistant"]',
-    '.markdown'
+    '[class*="markdown"]',
+    '.prose'
   ],
   gemini: [
     '.model-response-text',
@@ -93,7 +95,6 @@ function connectWebSocket() {
   ws.onopen = () => {
     isConnected = true;
     reconnectDelay = 1000; // Reset backoff
-    showBadge(true);
     chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: true, platform: PLATFORM }).catch(() => { });
     // Flush pending queue
     pendingCode.forEach(d => ws.send(JSON.stringify(d)));
@@ -104,13 +105,12 @@ function connectWebSocket() {
 
   ws.onclose = () => {
     isConnected = false;
-    showBadge(false);
     stopHeartbeat();
     chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: false, platform: PLATFORM }).catch(() => { });
     scheduleReconnect();
   };
 
-  ws.onerror = () => { isConnected = false; showBadge(false); };
+  ws.onerror = () => { isConnected = false; scheduleReconnect(); };
 
   ws.onmessage = (e) => {
     try {
@@ -136,8 +136,9 @@ function connectWebSocket() {
 }
 
 function scheduleReconnect() {
-  setTimeout(connectWebSocket, reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+  const delay = reconnectDelay;
+  reconnectDelay = delay === 0 ? 1000 : Math.min(delay * 1.5, MAX_RECONNECT_DELAY);
+  setTimeout(connectWebSocket, delay);
 }
 
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
@@ -199,6 +200,43 @@ function extractFilename(code) {
   return null;
 }
 
+
+// ─── Extract filename from DOM label above code block (e.g. ChatGPT) ─────────
+// ChatGPT renders a filename pill/label as a sibling element above <pre>
+// Only looks at the immediately preceding element, max 80 chars
+
+function extractFilenameFromDOM(block) {
+  const pre = block.closest('pre');
+  if (!pre) return null;
+
+  // Check previous sibling of pre
+  const candidates = [];
+
+  // Sibling before <pre>
+  const prev = pre.previousElementSibling;
+  if (prev) candidates.push(prev.textContent?.trim());
+
+  // Parent's previous sibling (ChatGPT wraps pre in a div)
+  const parentPrev = pre.parentElement?.previousElementSibling;
+  if (parentPrev) candidates.push(parentPrev.textContent?.trim());
+
+  // Also check for a title/label child inside parent's previous sibling
+  if (parentPrev) {
+    const inner = parentPrev.querySelector('[class*="title"],[class*="label"],[class*="filename"],[class*="lang"]');
+    if (inner) candidates.push(inner.textContent?.trim());
+  }
+
+  const filePattern = /^([\w][\w/\\-.]*\.\w{1,10})$/;
+
+  for (const text of candidates) {
+    if (!text || text.length > 80 || text.includes('\n')) continue;
+    const m = text.match(filePattern);
+    if (m && !isBlockedFile(m[1])) return m[1];
+  }
+
+  return null;
+}
+
 function isBlockedFile(filename) {
   const blocked = [
     'manifest.json', 'content.js', 'background.js',
@@ -240,11 +278,13 @@ function processBlock(block) {
   const h = hash(raw);
   if (sentHashes.has(h)) return;
 
-  // Strict filename check
-  const filename = extractFilename(raw);
+  // Try filename from code first line, then from DOM label above block
+  const filename = extractFilename(raw) || extractFilenameFromDOM(block);
   if (!filename) return;
 
   sentHashes.add(h);
+  // Persist so refresh doesn't re-send
+  chrome.storage.local.set({ synapseHashes: [...sentHashes].slice(-500) });
 
   const payload = {
     type: 'code_block',
@@ -319,59 +359,110 @@ function sendToServer(payload) {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 
-function showBadge(connected) {
-  let b = document.getElementById('acs-badge');
-  if (!b) {
-    b = document.createElement('div');
-    b.id = 'acs-badge';
-    b.style.cssText = `
-      position: fixed; bottom: 16px; right: 16px; z-index: 99999;
-      padding: 8px 14px; border-radius: 24px;
-      font-size: 12px; font-family: -apple-system, 'Segoe UI', monospace;
-      font-weight: 600; letter-spacing: 0.3px;
-      box-shadow: 0 4px 16px rgba(0,0,0,.4);
-      backdrop-filter: blur(12px);
-      transition: all .4s cubic-bezier(.4,0,.2,1);
-      cursor: pointer; user-select: none;
-    `;
-    b.addEventListener('click', () => { b.style.opacity = b.style.opacity === '0.1' ? '1' : '0.1'; });
-    document.body.appendChild(b);
-  }
-  b.textContent = connected ? '🔗 Synapse: ON' : '⚠ Synapse: OFF';
-  b.style.background = connected
-    ? 'linear-gradient(135deg, rgba(0,255,136,.15), rgba(0,255,136,.05))'
-    : 'linear-gradient(135deg, rgba(255,107,107,.15), rgba(255,107,107,.05))';
-  b.style.color = connected ? '#00ff88' : '#ff6b6b';
-  b.style.border = `1px solid ${connected ? 'rgba(0,255,136,.3)' : 'rgba(255,107,107,.3)'}`;
-}
 
 function showToast(filename, status, mode) {
-  const t = document.createElement('div');
   const isOk = status === 'ok';
+  const green = '#00ff88';
+  const red = '#ff5f5f';
+  const accent = isOk ? green : red;
+
+  const modeLabels = { overwrite: 'WRITE', patch: 'PATCH', insert: 'INSERT', delete: 'DELETE' };
+  const modeLabel = modeLabels[mode] || 'WRITE';
+  const shortName = filename.length > 36 ? '...' + filename.slice(-34) : filename;
+
+  const t = document.createElement('div');
   t.style.cssText = `
-    position: fixed; top: 20px; right: 20px; z-index: 100000;
-    padding: 12px 20px; border-radius: 12px;
-    font-size: 13px; font-family: -apple-system, 'Segoe UI', monospace;
-    font-weight: 500;
-    box-shadow: 0 8px 32px rgba(0,0,0,.5);
-    backdrop-filter: blur(16px);
-    transform: translateX(120%);
-    transition: transform .4s cubic-bezier(.4,0,.2,1), opacity .4s;
-    background: ${isOk
-      ? 'linear-gradient(135deg, rgba(0,255,136,.12), rgba(0,180,100,.08))'
-      : 'linear-gradient(135deg, rgba(255,107,107,.12), rgba(200,50,50,.08))'};
-    color: ${isOk ? '#00ff88' : '#ff6b6b'};
-    border: 1px solid ${isOk ? 'rgba(0,255,136,.2)' : 'rgba(255,107,107,.2)'};
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2147483647;
+    width: 280px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,.7), 0 0 0 1px ${accent}33;
+    transform: translateX(calc(100% + 24px));
+    transition: transform .35s cubic-bezier(.22,1,.36,1), opacity .35s;
+    opacity: 0;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
   `;
-  const modeIcon = { overwrite: '📝', patch: '🔧', insert: '➕', delete: '🗑️' };
-  t.textContent = `${isOk ? '✅' : '❌'} ${modeIcon[mode] || '📦'} ${filename}`;
+
+  t.innerHTML = `
+    <div style="
+      background: #0f0f1c;
+      border-left: 3px solid ${accent};
+      padding: 0;
+    ">
+      <!-- top bar -->
+      <div style="
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px 6px;
+        border-bottom: 1px solid rgba(255,255,255,.06);
+      ">
+        <div style="display:flex;align-items:center;gap:7px;">
+          <span style="
+            width: 7px; height: 7px; border-radius: 50%;
+            background: ${accent};
+            box-shadow: 0 0 6px ${accent};
+            flex-shrink: 0;
+            display: inline-block;
+          "></span>
+          <span style="
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: ${accent};
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+          ">SYNAPSE</span>
+        </div>
+        <span style="
+          font-size: 9px;
+          font-weight: 600;
+          letter-spacing: 0.8px;
+          color: ${accent}cc;
+          background: ${accent}18;
+          border: 1px solid ${accent}33;
+          border-radius: 4px;
+          padding: 1px 6px;
+          font-family: 'JetBrains Mono', 'Courier New', monospace;
+        ">${modeLabel}</span>
+      </div>
+      <!-- filename row -->
+      <div style="padding: 8px 12px 10px;">
+        <div style="
+          font-size: 12px;
+          font-family: 'JetBrains Mono', 'Courier New', monospace;
+          color: #d0d0e0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          line-height: 1.4;
+        ">${isOk ? '✓' : '✗'} &nbsp;${shortName}</div>
+        <div style="
+          font-size: 9.5px;
+          color: #44445a;
+          margin-top: 3px;
+          font-family: 'JetBrains Mono', 'Courier New', monospace;
+        ">${isOk ? 'File written successfully' : 'Write failed'}</div>
+      </div>
+    </div>
+  `;
+
   document.body.appendChild(t);
-  requestAnimationFrame(() => { t.style.transform = 'translateX(0)'; });
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      t.style.transform = 'translateX(0)';
+      t.style.opacity = '1';
+    });
+  });
+
   setTimeout(() => {
-    t.style.transform = 'translateX(120%)';
+    t.style.transform = 'translateX(calc(100% + 24px))';
     t.style.opacity = '0';
-    setTimeout(() => t.remove(), 500);
-  }, 3000);
+    setTimeout(() => t.remove(), 400);
+  }, 3500);
 }
 
 function glow(block) {
@@ -390,16 +481,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'SCAN_NOW') extractCodeBlocks();
-  if (msg.type === 'UPDATE_PORT') { wsPort = msg.port; ws?.close(); }
+  if (msg.type === 'UPDATE_PORT') {
+    wsPort = msg.port;
+    reconnectDelay = 0; // force immediate reconnect
+    if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); }
+    isConnected = false;
+    stopHeartbeat();
+    chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: false, platform: PLATFORM }).catch(() => {});
+    connectWebSocket();
+  }
   if (msg.type === 'SET_AUTO_SYNC') { autoSync = msg.enabled; }
-  if (msg.type === 'CLEAR_CACHE') { sentHashes.clear(); }
+  if (msg.type === 'CLEAR_CACHE') { sentHashes.clear(); chrome.storage.local.remove('synapseHashes'); }
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-chrome.storage.local.get(['wsPort', 'autoSync'], (r) => {
+chrome.storage.local.get(['wsPort', 'autoSync', 'synapseHashes'], (r) => {
   if (r.wsPort) wsPort = r.wsPort;
   if (r.autoSync !== undefined) autoSync = r.autoSync;
+  // Restore persisted hashes so page refresh doesn't re-send old blocks
+  if (Array.isArray(r.synapseHashes)) {
+    r.synapseHashes.forEach(h => sentHashes.add(h));
+    console.log(`[Synapse] Restored ${sentHashes.size} known hashes`);
+  }
   connectWebSocket();
   startObserver();
   console.log(`[Synapse] Initialized on ${PLATFORM}`);

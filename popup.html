@@ -1,526 +1,479 @@
 <!DOCTYPE html>
 <html>
-
 <head>
   <meta charset="UTF-8">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet">
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+    :root {
+      --green: #00ff88;
+      --green-dim: rgba(0,255,136,0.1);
+      --green-glow: rgba(0,255,136,0.25);
+      --green-border: rgba(0,255,136,0.25);
+      --red: #ff5f5f;
+      --bg: #09090f;
+      --bg2: #0f0f1c;
+      --bg3: #141422;
+      --bg4: #1a1a2a;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4f0;
+      --sub: #8888a8;
+      --muted: #44445a;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'DM Sans', sans-serif;
     }
 
-    body {
-      width: 340px;
-      font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
-      background: #0a0a14;
-      color: #e2e2e8;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 360px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
       overflow-x: hidden;
+      overflow-y: auto;
+      scrollbar-width: none;
     }
 
-    /* ─── Header ─────────────────────────────────────── */
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar { display: none; }
+
+    /* ── Header ─────────────────────────────────── */
     .header {
-      background: linear-gradient(135deg, #12122a 0%, #0e1a2e 50%, #121230 100%);
-      padding: 18px 20px 14px;
-      border-bottom: 1px solid rgba(0, 255, 136, .1);
-      position: relative;
-      overflow: hidden;
-    }
-
-    .header::before {
-      content: '';
-      position: absolute;
-      top: -50%;
-      right: -30%;
-      width: 120px;
-      height: 120px;
-      background: radial-gradient(circle, rgba(0, 255, 136, .08) 0%, transparent 70%);
-      border-radius: 50%;
-    }
-
-    .header-row {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
+      padding: 16px 18px 14px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
     }
 
-    .header-icon {
-      font-size: 20px;
-      filter: drop-shadow(0 0 8px rgba(0, 255, 136, .4));
+    .header img {
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 8px rgba(0,255,136,0.5));
     }
 
     .header h1 {
+      font-family: var(--mono);
       font-size: 15px;
       font-weight: 700;
-      background: linear-gradient(135deg, #00ff88, #00cc6a);
+      letter-spacing: 2px;
+      background: linear-gradient(90deg, #00ff88 0%, #00d4ff 100%);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
-      letter-spacing: 0.5px;
+      line-height: 1;
     }
 
     .header p {
-      font-size: 11px;
-      color: #6b6b80;
-      margin-top: 4px;
-      font-weight: 400;
+      font-size: 10.5px;
+      color: var(--sub);
+      margin-top: 3px;
+      letter-spacing: 0.1px;
     }
 
-    /* ─── Status Bar ─────────────────────────────────── */
-    .status-bar {
+    /* ── Status ─────────────────────────────────── */
+    .status {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 12px 20px;
-      background: rgba(17, 17, 40, .6);
-      border-bottom: 1px solid rgba(255, 255, 255, .04);
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg3);
     }
 
     .dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       flex-shrink: 0;
-      transition: all .4s;
     }
 
     .dot.on {
-      background: #00ff88;
-      box-shadow: 0 0 8px rgba(0, 255, 136, .6), 0 0 20px rgba(0, 255, 136, .2);
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
       animation: pulse 2s ease-in-out infinite;
     }
 
     .dot.off {
-      background: #ff6b6b;
-      box-shadow: 0 0 8px rgba(255, 107, 107, .4);
+      background: var(--red);
+      box-shadow: 0 0 6px rgba(255,95,95,0.5);
     }
 
     @keyframes pulse {
-
-      0%,
-      100% {
-        box-shadow: 0 0 8px rgba(0, 255, 136, .6), 0 0 20px rgba(0, 255, 136, .2);
-      }
-
-      50% {
-        box-shadow: 0 0 12px rgba(0, 255, 136, .8), 0 0 30px rgba(0, 255, 136, .3);
-      }
+      0%,100% { box-shadow: 0 0 6px var(--green); }
+      50% { box-shadow: 0 0 14px var(--green), 0 0 28px rgba(0,255,136,0.2); }
     }
 
-    .status-info {
-      flex: 1;
-    }
+    .status-info { flex: 1; min-width: 0; }
 
-    .status-text {
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .status-meta {
-      font-size: 10px;
-      color: #555;
-      margin-top: 2px;
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    /* ─── Section ─────────────────────────────────────── */
-    .section {
-      padding: 14px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, .04);
-    }
-
-    .section label {
-      display: block;
-      font-size: 10px;
-      color: #555;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      font-weight: 600;
-    }
-
-    .section input {
-      width: 100%;
-      padding: 8px 12px;
-      background: rgba(26, 26, 50, .8);
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 8px;
-      color: #e0e0e0;
+    #statusText {
       font-size: 13px;
-      font-family: 'JetBrains Mono', monospace;
-      transition: border-color .3s, box-shadow .3s;
-      outline: none;
-    }
-
-    .section input:focus {
-      border-color: rgba(0, 255, 136, .3);
-      box-shadow: 0 0 0 3px rgba(0, 255, 136, .06);
-    }
-
-    /* ─── Toggle Row ──────────────────────────────────── */
-    .toggle-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, .04);
-    }
-
-    .toggle-label {
-      font-size: 12px;
-      font-weight: 500;
-      color: #b0b0c0;
-    }
-
-    .toggle-label span {
-      display: block;
-      font-size: 10px;
-      color: #555;
-      margin-top: 1px;
-    }
-
-    .toggle {
-      position: relative;
-      width: 36px;
-      height: 20px;
-      cursor: pointer;
-    }
-
-    .toggle input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .toggle-slider {
-      position: absolute;
-      inset: 0;
-      background: #2a2a40;
-      border-radius: 20px;
-      transition: background .3s;
-    }
-
-    .toggle-slider::before {
-      content: '';
-      position: absolute;
-      width: 16px;
-      height: 16px;
-      left: 2px;
-      top: 2px;
-      background: #888;
-      border-radius: 50%;
-      transition: transform .3s, background .3s;
-    }
-
-    .toggle input:checked+.toggle-slider {
-      background: rgba(0, 255, 136, .2);
-    }
-
-    .toggle input:checked+.toggle-slider::before {
-      transform: translateX(16px);
-      background: #00ff88;
-      box-shadow: 0 0 8px rgba(0, 255, 136, .4);
-    }
-
-    /* ─── Buttons ─────────────────────────────────────── */
-    .btn-group {
-      display: flex;
-      gap: 8px;
-      padding: 14px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, .04);
-    }
-
-    .btn {
-      flex: 1;
-      padding: 9px 12px;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 12px;
       font-weight: 600;
-      font-family: 'Inter', sans-serif;
-      transition: all .3s cubic-bezier(.4, 0, .2, 1);
-      letter-spacing: 0.2px;
+      line-height: 1.3;
     }
 
-    .btn:active {
-      transform: scale(.96);
+    #statusMeta {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--sub);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    .btn-primary {
-      background: linear-gradient(135deg, #00ff88, #00cc6a);
-      color: #0a0a14;
-      box-shadow: 0 4px 16px rgba(0, 255, 136, .15);
-    }
-
-    .btn-primary:hover {
-      box-shadow: 0 4px 24px rgba(0, 255, 136, .25);
-    }
-
-    .btn-secondary {
-      background: rgba(30, 30, 60, .8);
-      color: #888;
-      border: 1px solid rgba(255, 255, 255, .06);
-    }
-
-    .btn-secondary:hover {
-      background: rgba(40, 40, 70, .9);
-      color: #aaa;
-    }
-
-    /* ─── Stats ───────────────────────────────────────── */
-    .stats-row {
+    /* ── Stats ──────────────────────────────────── */
+    .stats {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
-      gap: 8px;
-      padding: 14px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, .04);
+      border-bottom: 1px solid var(--border);
     }
 
-    .stat-card {
-      background: rgba(20, 20, 45, .6);
-      border-radius: 10px;
-      padding: 10px;
+    .stat {
+      padding: 14px 8px;
       text-align: center;
-      border: 1px solid rgba(255, 255, 255, .04);
+      border-right: 1px solid var(--border);
     }
 
-    .stat-value {
-      font-size: 18px;
+    .stat:last-child { border-right: none; }
+
+    .stat-val {
+      font-family: var(--mono);
+      font-size: 22px;
       font-weight: 700;
-      font-family: 'JetBrains Mono', monospace;
       background: linear-gradient(135deg, #00ff88, #00aaff);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
+      line-height: 1.1;
     }
 
-    .stat-label {
-      font-size: 9px;
-      color: #555;
+    .stat-lbl {
+      font-size: 9.5px;
+      color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-top: 2px;
+      letter-spacing: 0.8px;
+      margin-top: 3px;
     }
 
-    /* ─── Log ─────────────────────────────────────────── */
-    .log-area {
-      padding: 10px 20px 16px;
-    }
+    /* ── Toggles ─────────────────────────────────── */
+    .toggles { border-bottom: 1px solid var(--border); }
 
-    .log-area label {
-      font-size: 10px;
-      color: #555;
-      text-transform: uppercase;
+    .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 8px;
+      gap: 12px;
+      padding: 11px 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-row:hover { background: rgba(255,255,255,0.02); }
+
+    .toggle-copy { min-width: 0; }
+
+    .toggle-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1.3;
+    }
+
+    .toggle-desc {
+      font-size: 10.5px;
+      color: var(--sub);
+      margin-top: 2px;
+    }
+
+    .switch {
+      position: relative;
+      width: 38px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .track {
+      position: absolute;
+      inset: 0;
+      background: #1c1c2e;
+      border-radius: 22px;
+      border: 1px solid rgba(255,255,255,0.08);
+      transition: all 0.25s;
+      cursor: pointer;
+    }
+
+    .track::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      top: 3px;
+      left: 3px;
+      background: #555568;
+      border-radius: 50%;
+      transition: all 0.25s;
+    }
+
+    .switch input:checked + .track {
+      background: var(--green-dim);
+      border-color: var(--green-border);
+    }
+
+    .switch input:checked + .track::before {
+      transform: translateX(16px);
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(0,255,136,0.6);
+    }
+
+    /* ── Port row ────────────────────────────────── */
+    .port-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .port-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--sub);
+      text-transform: uppercase;
       letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    .port-input {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .port-input:focus {
+      border-color: var(--green-border);
+      box-shadow: 0 0 0 3px rgba(0,255,136,0.06);
+    }
+
+    /* ── Buttons ─────────────────────────────────── */
+    .btns {
+      display: flex;
+      gap: 8px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .btn {
+      flex: 1;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 9px;
+      font-family: var(--sans);
+      font-size: 12.5px;
       font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.2px;
+    }
+
+    .btn:disabled { opacity: 0.6; cursor: wait; }
+    .btn:active { transform: scale(0.97); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #00ff88, #00cc6a);
+      color: #05050e;
+      box-shadow: 0 2px 12px rgba(0,255,136,0.15);
+    }
+
+    .btn-primary:hover { box-shadow: 0 4px 20px rgba(0,255,136,0.3); }
+
+    .btn-secondary {
+      background: var(--bg4);
+      color: var(--sub);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { color: var(--text); border-color: rgba(255,255,255,0.12); }
+
+    /* ── Note ────────────────────────────────────── */
+    .note {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 5px 18px 7px;
+      min-height: 24px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+
+    .note.info { color: #6effc0; }
+    .note.error { color: #ff8888; }
+
+    /* ── Log ─────────────────────────────────────── */
+    .log-wrap { border-top: 1px solid var(--border); }
+
+    .log-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .log-title {
+      font-family: var(--mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
     }
 
     .log-clear {
-      font-size: 9px;
-      cursor: pointer;
-      color: #444;
+      font-size: 10px;
+      color: var(--muted);
       background: none;
       border: none;
-      font-family: inherit;
-      letter-spacing: 0.5px;
-      transition: color .2s;
+      cursor: pointer;
+      font-family: var(--mono);
+      transition: color 0.2s;
     }
 
-    .log-clear:hover {
-      color: #ff6b6b;
-    }
+    .log-clear:hover { color: var(--red); }
+    .log-clear:disabled { color: #222230; cursor: default; }
 
     #log {
-      font-size: 11px;
-      font-family: 'JetBrains Mono', monospace;
-      max-height: 120px;
+      max-height: 100px;
       overflow-y: auto;
-      line-height: 1.8;
-      scrollbar-width: thin;
-      scrollbar-color: #2a2a40 transparent;
+      scrollbar-width: none;
     }
 
-    #log::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    #log::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    #log::-webkit-scrollbar-thumb {
-      background: #2a2a40;
-      border-radius: 4px;
-    }
+    #log::-webkit-scrollbar { display: none; }
 
     .log-entry {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, .02);
-      animation: fadeIn .3s ease;
+      gap: 8px;
+      padding: 5px 18px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      border-bottom: 1px solid rgba(255,255,255,0.025);
     }
 
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(-4px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .log-icon {
-      font-size: 10px;
-    }
-
-    .log-file {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .log-time {
-      font-size: 9px;
-      color: #444;
-      flex-shrink: 0;
-    }
+    .log-icon { width: 12px; color: var(--muted); flex-shrink: 0; text-align: center; font-size: 11px; }
+    .log-file { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .log-time { font-size: 9px; color: var(--muted); flex-shrink: 0; }
 
     .log-empty {
-      color: #333;
+      text-align: center;
+      padding: 14px 0;
+      color: var(--muted);
+      font-size: 10.5px;
       font-style: italic;
-      text-align: center;
-      padding: 8px 0;
+      font-family: var(--mono);
     }
 
-    /* ─── Footer ──────────────────────────────────────── */
+    /* ── Footer ──────────────────────────────────── */
     .footer {
-      padding: 10px 20px;
+      padding: 7px 18px 8px;
       text-align: center;
-      font-size: 9px;
-      color: #333;
-      letter-spacing: 0.5px;
-    }
-
-    .footer a {
-      color: #00ff8866;
-      text-decoration: none;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      color: var(--muted);
+      letter-spacing: 0.3px;
+      border-top: 1px solid var(--border);
     }
   </style>
 </head>
-
 <body>
-
-  <!-- Header -->
   <div class="header">
-    <div class="header-row">
-      <img src="icons/icon48.png" class="header-icon" alt="Synapse" style="width:24px;height:24px;">
-      <div>
-        <h1>SYNAPSE</h1>
-        <p>The neural link between AI and your codebase</p>
-      </div>
+    <img src="icons/icon48.png" alt="Synapse">
+    <div>
+      <h1>SYNAPSE</h1>
+      <p>Neural link between AI and your codebase</p>
     </div>
   </div>
 
-  <!-- Status -->
-  <div class="status-bar">
+  <div class="status">
     <div class="dot off" id="statusDot"></div>
     <div class="status-info">
-      <div class="status-text" id="statusText">Checking connection…</div>
-      <div class="status-meta" id="statusMeta"></div>
+      <div id="statusText">Checking connection...</div>
+      <div id="statusMeta"></div>
     </div>
   </div>
 
-  <!-- Stats -->
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-value" id="statFiles">0</div>
-      <div class="stat-label">Files Synced</div>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-val" id="statFiles">0</div>
+      <div class="stat-lbl">Synced</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-value" id="statPatches">0</div>
-      <div class="stat-label">Patches</div>
+    <div class="stat">
+      <div class="stat-val" id="statPatches">0</div>
+      <div class="stat-lbl">Patches</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-value" id="statErrors">0</div>
-      <div class="stat-label">Errors</div>
+    <div class="stat">
+      <div class="stat-val" id="statErrors">0</div>
+      <div class="stat-lbl">Errors</div>
     </div>
   </div>
 
-  <!-- Toggles -->
-  <div class="toggle-row">
-    <div class="toggle-label">
-      Auto-Sync
-      <span>Automatically sync detected code</span>
+  <div class="toggles">
+    <div class="toggle-row">
+      <div class="toggle-copy">
+        <div class="toggle-name">Auto-Sync</div>
+        <div class="toggle-desc">Detect &amp; write code automatically</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="autoSyncToggle" checked><div class="track"></div></label>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="autoSyncToggle" checked>
-      <div class="toggle-slider"></div>
-    </label>
-  </div>
-  <div class="toggle-row">
-    <div class="toggle-label">
-      Dry-Run Mode
-      <span>Preview changes without writing</span>
+    <div class="toggle-row">
+      <div class="toggle-copy">
+        <div class="toggle-name">Dry-Run Mode</div>
+        <div class="toggle-desc">Preview changes without writing</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="dryRunToggle"><div class="track"></div></label>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="dryRunToggle">
-      <div class="toggle-slider"></div>
-    </label>
-  </div>
-  <div class="toggle-row">
-    <div class="toggle-label">
-      Git Backup
-      <span>Auto-commit before file changes</span>
+    <div class="toggle-row">
+      <div class="toggle-copy">
+        <div class="toggle-name">Git Backup</div>
+        <div class="toggle-desc">Auto-commit before file changes</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="gitBackupToggle"><div class="track"></div></label>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="gitBackupToggle">
-      <div class="toggle-slider"></div>
-    </label>
   </div>
 
-  <!-- Port Config -->
-  <div class="section">
-    <label>Server Port</label>
-    <input type="number" id="portInput" value="3131" />
+  <div class="port-row">
+    <span class="port-label">WS Port</span>
+    <input type="number" class="port-input" id="portInput" value="3131" min="1" max="65535">
   </div>
 
-  <!-- Buttons -->
-  <div class="btn-group">
-    <button class="btn btn-primary" id="saveBtn">Save & Reconnect</button>
-    <button class="btn btn-secondary" id="scanBtn">⟳ Scan Now</button>
+  <div class="btns">
+    <button class="btn btn-primary" id="saveBtn">Save &amp; Reconnect</button>
+    <button class="btn btn-secondary" id="scanBtn">Scan Now</button>
   </div>
 
-  <!-- Log -->
-  <div class="log-area">
-    <label>
-      Activity Log
+  <div class="note" id="actionNote"></div>
+
+  <div class="log-wrap">
+    <div class="log-head">
+      <span class="log-title">Activity Log</span>
       <button class="log-clear" id="clearLogBtn">clear</button>
-    </label>
-    <div id="log">
-      <div class="log-empty">No syncs yet…</div>
     </div>
+    <div id="log"><div class="log-empty">No sync activity yet.</div></div>
   </div>
 
-  <!-- Footer -->
-  <div class="footer">
-    Synapse v2.0 — Claude · ChatGPT · Gemini · DeepSeek · Copilot · Grok & more
-  </div>
+  <div class="footer">v2.0 &nbsp;·&nbsp; Claude &nbsp;·&nbsp; ChatGPT &nbsp;·&nbsp; Gemini &nbsp;·&nbsp; DeepSeek &nbsp;·&nbsp; Copilot &nbsp;·&nbsp; Grok</div>
 
   <script src="popup.js"></script>
 </body>
-
 </html>

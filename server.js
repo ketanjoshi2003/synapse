@@ -266,8 +266,20 @@ function parseUnifiedDiff(diffText) {
 // ─── File Operations ──────────────────────────────────────────────────────────
 
 function safePath(filename) {
-  const safe = filename.replace(/\.\./g, '').replace(/^[\/\\]/, '');
-  return path.join(OUTPUT_DIR, safe);
+  // Normalize separators and strip leading slashes
+  const normalized = filename.replace(/\\/g, '/').replace(/^\//, '');
+  const resolved = path.resolve(OUTPUT_DIR, normalized);
+  // Block path traversal outside OUTPUT_DIR
+  if (!resolved.startsWith(path.resolve(OUTPUT_DIR))) {
+    throw new Error(`Path traversal blocked: ${filename}`);
+  }
+  // Block extension's own files
+  const BLOCKED = ['manifest.json', 'content.js', 'background.js', 'popup.js', 'popup.html', 'package-lock.json'];
+  const basename = path.basename(resolved);
+  if (BLOCKED.includes(basename)) {
+    throw new Error(`Blocked file: ${basename}`);
+  }
+  return resolved;
 }
 
 function patchFile(filename, patches) {
@@ -317,30 +329,9 @@ function writeFile(filename, code) {
     const fullPath = safePath(filename);
     const exists = fs.existsSync(fullPath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    // Create .bak backup if file exists
-    if (exists) {
-      const bak = fullPath + `.bak.${Date.now()}`;
-      fs.copyFileSync(fullPath, bak);
-      console.log(`   \x1b[90m💾 Backup: ${path.basename(bak)}\x1b[0m`);
-    }
     fs.writeFileSync(fullPath, code, 'utf8');
     return { success: true, message: `${exists ? 'Updated' : 'Created'} ${filename}` };
   } catch (e) { return { success: false, message: e.message }; }
-}
-
-// ─── Git Backup ───────────────────────────────────────────────────────────────
-
-function gitCommitBefore(filename) {
-  try {
-    execSync('git rev-parse --is-inside-work-tree', { cwd: OUTPUT_DIR, stdio: 'pipe' });
-    execSync('git add -A', { cwd: OUTPUT_DIR, stdio: 'pipe' });
-    execSync(`git commit -m "Synapse auto-backup before updating ${filename}" --allow-empty`, {
-      cwd: OUTPUT_DIR, stdio: 'pipe'
-    });
-    console.log(`   \x1b[90m📌 Git backup committed\x1b[0m`);
-  } catch (e) {
-    // Not a git repo or nothing to commit — silent
-  }
 }
 
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
