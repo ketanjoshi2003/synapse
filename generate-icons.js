@@ -6,47 +6,59 @@ const path = require('path');
 
 // Minimal 1-pixel-at-a-time PNG encoder (no dependencies needed)
 function createPNG(size) {
-    // Create a simple icon: dark background with a lightning bolt
     const canvas = [];
     const center = size / 2;
+
+    // Point-in-polygon (ray casting)
+    function pointInPoly(px, py, poly) {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i][0], yi = poly[i][1];
+            const xj = poly[j][0], yj = poly[j][1];
+            if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    // Classic ⚡ lightning bolt polygon (normalized 0-1, clockwise)
+    // Upper blade: top-right slanting down to mid-left
+    // Lower blade: mid-right slanting down to bottom-left
+    const boltPoly = [
+        [0.44, 0.04],  // top-left
+        [0.65, 0.04],  // top-right
+        [0.53, 0.50],  // mid inner-right
+        [0.65, 0.50],  // mid outer-right (step)
+        [0.54, 0.96],  // bottom-right
+        [0.33, 0.96],  // bottom-left
+        [0.45, 0.50],  // mid outer-left (step)
+        [0.33, 0.50],  // mid inner-left
+    ];
 
     for (let y = 0; y < size; y++) {
         const row = [];
         for (let x = 0; x < size; x++) {
-            // Distance from center
             const dx = (x - center) / center;
             const dy = (y - center) / center;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            // Circle background
             if (dist < 0.85) {
-                // Lightning bolt shape (simplified)
                 const nx = x / size;
                 const ny = y / size;
-                let isBolt = false;
-
-                // Simple zigzag lightning shape
-                if (ny > 0.2 && ny < 0.8) {
-                    const boltCenter = ny < 0.5
-                        ? 0.5 + (0.5 - ny) * 0.3  // top half leans right
-                        : 0.5 - (ny - 0.5) * 0.3; // bottom half leans left
-                    const boltWidth = 0.08 + (1 - Math.abs(ny - 0.5) * 2) * 0.04;
-                    if (Math.abs(nx - boltCenter) < boltWidth) isBolt = true;
-                }
+                const isBolt = pointInPoly(nx, ny, boltPoly);
 
                 if (isBolt) {
                     row.push([0, 255, 136, 255]); // Green bolt
                 } else {
-                    // Dark gradient background
                     const shade = Math.floor(15 + dist * 20);
                     row.push([shade, shade, Math.floor(shade * 1.5), 255]);
                 }
             } else if (dist < 0.95) {
-                // Green ring
                 const alpha = Math.max(0, 1 - (dist - 0.85) * 10);
                 row.push([0, Math.floor(255 * alpha * 0.5), Math.floor(136 * alpha * 0.5), Math.floor(255 * alpha)]);
             } else {
-                row.push([0, 0, 0, 0]); // Transparent
+                row.push([0, 0, 0, 0]);
             }
         }
         canvas.push(row);
