@@ -114,7 +114,7 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     isConnected = true;
-    reconnectDelay = 1000;
+    reconnectDelay = 3000;
     chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: true, platform: PLATFORM }).catch(() => {});
     pendingCode.forEach(d => ws.send(JSON.stringify(d)));
     pendingCode = [];
@@ -162,8 +162,9 @@ function connectWebSocket() {
 function scheduleReconnect() {
   if (reconnectTimer) return;
   const delay = reconnectDelay;
-  reconnectDelay = delay === 0 ? 1000 : Math.min(delay * 1.5, MAX_RECONNECT_DELAY);
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWebSocket(); }, delay);
+  reconnectDelay = delay === 0 ? 3000 : Math.min(delay * 1.5, MAX_RECONNECT_DELAY);
+  const jitter = Math.random() * 1000;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWebSocket(); }, delay + jitter);
 }
 
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ function hash(str) {
 function extractFilenameFromComment(code) {
   const lines = code.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const patterns = [
-    /^(?:\/\/|#|--)\s+([\w][\w/\\\-.]*\.\w{1,10})$/,
+    /^(?:\/\/|#|--)\s+([\w][\w/\\\-.]*\.\w{1,10})(?:\s.*)?$/,
     /^\/\*\s*([\w][\w/\\\-.]*\.\w{1,10})\s*\*\/$/,
     /^<!--\s*([\w][\w/\\\-.]*\.\w{1,10})\s*-->$/,
     /^;\s*([\w][\w/\\\-.]*\.\w{1,10})$/,
