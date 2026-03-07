@@ -16,11 +16,13 @@ let autoSync = true;
 let sentHashes = new Set();
 const HASH_STORAGE_KEY = 'synapseHashes';
 let pendingCode = [];
-let reconnectDelay = 1000;
+let reconnectDelay = 2000;
+const MIN_RECONNECT_DELAY = 2000;
 const MAX_RECONNECT_DELAY = 30000;
 let heartbeatInterval = null;
 let reconnectTimer = null;
 let projectFiles = []; // File tree from server for smart filename matching
+let isPageVisible = !document.hidden;
 
 // ─── Platform Detection ──────────────────────────────────────────────────────
 
@@ -108,18 +110,27 @@ const ASSISTANT_SELECTORS = {
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 function connectWebSocket() {
+  // Don't connect if page is hidden (background tab)
+  if (!isPageVisible) return;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  // Clean up any lingering socket before creating a new one
+  if (ws) {
+    try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (_) {}
+    ws = null;
+  }
+
   try { ws = new WebSocket(`ws://localhost:${wsPort}`); }
   catch (e) { scheduleReconnect(); return; }
 
   ws.onopen = () => {
     isConnected = true;
-    reconnectDelay = 3000;
+    reconnectDelay = MIN_RECONNECT_DELAY;
     chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: true, platform: PLATFORM }).catch(() => {});
     pendingCode.forEach(d => ws.send(JSON.stringify(d)));
     pendingCode = [];
     startHeartbeat();
-    console.log(`[Synapse] ✅ Connected to server (platform: ${PLATFORM})`);
+    console.log(`[Synapse] Connected to server (platform: ${PLATFORM})`);
   };
 
   ws.onclose = () => {
@@ -127,7 +138,8 @@ function connectWebSocket() {
     ws = null;
     stopHeartbeat();
     chrome.runtime.sendMessage({ type: 'WS_STATUS', connected: false, platform: PLATFORM }).catch(() => {});
-    scheduleReconnect();
+    // Only reconnect if page is still visible
+    if (isPageVisible) scheduleReconnect();
   };
 
   ws.onerror = () => { /* onclose will fire after this */ };
@@ -153,7 +165,7 @@ function connectWebSocket() {
       }
       if (d.type === 'FILE_TREE') {
         projectFiles = d.files || [];
-        console.log(`[Synapse] 📂 Received file tree: ${projectFiles.length} files`);
+        console.log(`[Synapse] Received file tree: ${projectFiles.length} files`);
       }
     } catch (_) {}
   };
@@ -161,9 +173,12 @@ function connectWebSocket() {
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
+  if (!isPageVisible) return;
+
   const delay = reconnectDelay;
-  reconnectDelay = delay === 0 ? 3000 : Math.min(delay * 1.5, MAX_RECONNECT_DELAY);
-  const jitter = Math.random() * 1000;
+  // Exponential backoff with a proper minimum floor
+  reconnectDelay = Math.min(delay * 1.5, MAX_RECONNECT_DELAY);
+  const jitter = Math.random() * Math.min(delay * 0.3, 2000);
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWebSocket(); }, delay + jitter);
 }
 
@@ -622,7 +637,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SCAN_NOW') extractCodeBlocks();
   if (msg.type === 'UPDATE_PORT') {
     wsPort = msg.port;
-    reconnectDelay = 0;
+    reconnectDelay = MIN_RECONNECT_DELAY;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); ws = null; }
     isConnected = false;
@@ -632,6 +647,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SET_AUTO_SYNC') { autoSync = msg.enabled; }
   if (msg.type === 'CLEAR_CACHE') { sentHashes.clear(); chrome.storage.local.remove('synapseHashes'); }
+});
+
+// ─── Page Visibility & Cleanup ─────────────────────────────────────────────
+
+document.addEventListener('visibilitychange', () => {
+  isPageVisible = !document.hidden;
+  if (isPageVisible) {
+    // Tab became visible — reconnect if needed
+    if (!isConnected && !reconnectTimer) {
+      reconnectDelay = MIN_RECONNECT_DELAY;
+      connectWebSocket();
+    }
+  } else {
+    // Tab hidden — cancel pending reconnect to avoid background connection storms
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+});
+
+window.addEventListener('beforeunload', () => {
+  // Clean close so the server drops the connection immediately
+  if (ws) {
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.close();
+    ws = null;
+  }
+  stopHeartbeat();
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

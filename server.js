@@ -116,11 +116,19 @@ function getFileTree(dir, prefix = '') {
 
 // ─── WebSocket Server ─────────────────────────────────────────────────────────
 
-const wss = new WebSocket.Server({ port: PORT }, () => {
+const wss = new WebSocket.Server({ port: PORT, maxPayload: 5 * 1024 * 1024 }, () => {
   console.log(`\x1b[32m✅ Listening on ws://localhost:${PORT}\x1b[0m\n`);
 });
 
 wss.on('connection', (ws, req) => {
+  // Reject connections when too many clients are already connected
+  const MAX_CLIENTS = 50;
+  if (wss.clients.size > MAX_CLIENTS) {
+    console.log(`\x1b[33m⚠️  Rejected connection (${wss.clients.size} clients, limit ${MAX_CLIENTS})\x1b[0m`);
+    ws.close(1013, 'Too many connections');
+    return;
+  }
+
   const activeCount = wss.clients.size;
   console.log(`\x1b[34m🔌 Tab connected (${activeCount} active)\x1b[0m`);
 
