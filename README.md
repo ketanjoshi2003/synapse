@@ -2,6 +2,8 @@
 
 **The neural link between AI and your codebase.**
 
+Reads code blocks from AI chats and automatically creates, writes, updates, and patches files in your local project — like Claude Code, but for any AI.
+
 Works with **Claude**, **ChatGPT**, **Gemini**, **DeepSeek**, **Copilot**, **Grok**, **Poe**, **Mistral**, and **HuggingFace Chat**.
 
 ```
@@ -10,89 +12,52 @@ Works with **Claude**, **ChatGPT**, **Gemini**, **DeepSeek**, **Copilot**, **Gro
 
 ---
 
-## Setup (2 steps)
+## Setup
 
 ### Step 1 — Run the Local Server
 
 ```bash
-cd extension
 npm install
 node server.js --output /path/to/your/project
 ```
 
 **Options:**
-| Flag | Description |
-|------|-------------|
-| `--output <dir>` | Target project directory (default: current directory) |
-| `--port <num>` | WebSocket port (default: 3131) |
-| `--git` | Enable git auto-backup before each file write |
-| `--dry-run` | Preview mode — shows what would change without writing |
-
-You'll see:
-```
-╔══════════════════════════════════════════════════╗
-║            ⚡ Synapse — Server v2.0              ║
-╠══════════════════════════════════════════════════╣
-║ WebSocket Port : 3131                            ║
-║ Output Dir     : C:\projects\my-app              ║
-║ Git Backup     : OFF                             ║
-║ Dry-Run Mode   : OFF                             ║
-╚══════════════════════════════════════════════════╝
-```
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output <dir>` | current dir | Target project directory |
+| `--port <num>` | `3131` | WebSocket port |
+| `--git` | off | Auto git-commit before each file write |
+| `--dry-run` | off | Preview changes without writing anything |
 
 ### Step 2 — Install the Chrome Extension
 
 1. Open Chrome → `chrome://extensions`
-2. Enable **Developer Mode** (top right)
-3. Click **"Load unpacked"** → select the `extension/` folder
-4. Open any supported AI chat — you'll see a green **⚡ Synapse: ON** badge
+2. Enable **Developer Mode** (top right toggle)
+3. Click **"Load unpacked"** → select this folder
+4. Open any supported AI chat — the extension connects automatically
 
 ---
 
 ## How It Works
 
-1. Chat with any AI and ask it to write code
-2. The extension detects code blocks in real-time via DOM observers
-3. First line of code must be a filename comment (see below)
-4. Extension sends it over WebSocket to your local server
-5. Server writes/patches/inserts/deletes the file in your project
+1. Chat with any AI and ask it to write or edit code
+2. The extension watches the page in real-time via DOM observers
+3. When the AI finishes generating, code blocks are extracted and sent over WebSocket
+4. The server writes, patches, or creates the file in your project directory
 
----
-
-## Filename Comment Formats
-
-The **first line** of each code block must be a filename comment. All common comment styles are supported:
-
-```javascript
-// src/components/Button.tsx       ← JS, TS, C, C++, Java, Go, Rust
-```
-```python
-# utils/helpers.py                 ← Python, Ruby, Bash, YAML, Dockerfile
-```
-```sql
--- migrations/001_init.sql         ← SQL, Haskell, Lua
-```
-```css
-/* styles/global.css */            ← CSS, C multi-line
-```
-```html
-<!-- templates/layout.html -->     ← HTML, XML
-```
-```ini
-; config/settings.ini             ← INI, Lisp, Assembly
-```
-
-You can also use the explicit format:
-```
-// file: src/utils/helper.ts
-```
+Filenames are detected automatically using a 4-method chain:
+1. **Code fence attributes** — ` ```tsx src/Button.tsx `
+2. **First-line comments** — `// src/Button.tsx`, `# utils/helper.py`, etc.
+3. **DOM labels** — headings or labels near the code block
+4. **Conversation context** — surrounding text in the AI chat
+5. **File tree matching** — if ambiguous, matches against your project's actual file list
 
 ---
 
 ## Write Modes
 
-### 1. Overwrite (default)
-Writes the entire file. Creates directories if needed. Backs up existing files.
+### Overwrite (default)
+Writes the entire file. Creates directories as needed.
 
 ```javascript
 // src/utils/math.js
@@ -101,75 +66,34 @@ export function add(a, b) {
 }
 ```
 
-### 2. Patch (`@patch` + `@find`/`@replace`)
-Find and replace text in an existing file. Supports **multiple patches** separated by `---` and **multi-line blocks** with `{}`.
+### SEARCH/REPLACE
+Standard search-and-replace diff format. Applied with fuzzy whitespace matching.
 
-**Single-line patches:**
-```javascript
-// src/config.js
-@patch
-@find: const PORT = 3000
-@replace: const PORT = 8080
----
-@find: debug: false
-@replace: debug: true
+```
+<<<<<<< SEARCH
+function oldName() {
+=======
+function newName() {
+>>>>>>> REPLACE
 ```
 
-**Multi-line patches:**
+### Smart Patch
+Code blocks containing `// ...existing code...` or `# ...existing code...` markers are detected as partial updates. Only the changed sections are applied, leaving the rest of the file intact.
+
 ```javascript
 // src/app.js
-@patch
-@find {
-function oldHandler(req, res) {
-  res.send('old');
-}
-}
-@replace {
-function newHandler(req, res) {
-  res.json({ status: 'ok' });
-}
+function setup() {
+  // ...existing code...
+  newFeature(); // ← only this line gets added
+  // ...existing code...
 }
 ```
-
-### 3. Insert (`@insert:N`)
-Insert lines after line N in an existing file.
-
-```javascript
-// src/routes.js
-// @insert:5
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-```
-
-### 4. Delete (`@delete:N-M`)
-Delete lines N through M in an existing file.
-
-```javascript
-// src/old-code.js
-// @delete:10-25
-```
-
-### 5. Unified Diff
-Standard unified diff format is also supported.
-
----
-
-## Extension Popup Features
-
-Click the extension icon to:
-- 📊 **View stats** — files synced, patches applied, errors
-- 🔄 **Auto-Sync toggle** — enable/disable automatic syncing
-- 🔍 **Dry-Run toggle** — preview changes without writing
-- 📌 **Git Backup toggle** — auto-commit before each change
-- ⟳ **Scan Now** — manually trigger a page scan
-- 📋 **Activity Log** — recent synced files with timestamps
 
 ---
 
 ## Config File
 
-Create a `.acs.config.json` in your project root for persistent settings:
+Create a `.synapse.config.json` in your project root for persistent settings (`.acs.config.json` also supported for backwards compatibility):
 
 ```json
 {
@@ -181,19 +105,29 @@ Create a `.acs.config.json` in your project root for persistent settings:
 
 ---
 
+## Popup
+
+Click the extension icon to see:
+- **Connection status** — connected/disconnected indicator
+- **Target directory** — which project the server is writing to
+- **Stats** — files created, updated, patches applied, errors
+- **Activity log** — recent operations with timestamps and mode labels
+
+---
+
 ## Supported AI Platforms
 
-| Platform | URL | Status |
-|----------|-----|--------|
-| Claude | claude.ai | ✅ |
-| ChatGPT | chat.openai.com / chatgpt.com | ✅ |
-| Gemini | gemini.google.com | ✅ |
-| DeepSeek | chat.deepseek.com | ✅ |
-| Copilot | copilot.microsoft.com | ✅ |
-| Grok | grok.x.ai | ✅ |
-| Poe | poe.com | ✅ |
-| Mistral | chat.mistral.ai | ✅ |
-| HuggingFace | huggingface.co/chat | ✅ |
+| Platform | URL |
+|----------|-----|
+| Claude | claude.ai |
+| ChatGPT | chat.openai.com / chatgpt.com |
+| Gemini | gemini.google.com |
+| DeepSeek | chat.deepseek.com |
+| Copilot | copilot.microsoft.com |
+| Grok | grok.x.ai |
+| Poe | poe.com |
+| Mistral | chat.mistral.ai |
+| HuggingFace | huggingface.co/chat |
 
 ---
 
@@ -201,14 +135,13 @@ Create a `.acs.config.json` in your project root for persistent settings:
 
 ```
 synapse/
-├── manifest.json          # Chrome extension config (MV3)
-├── content.js             # Runs on AI chat pages — watches DOM, extracts code
-├── background.js          # Service worker — relays messages, manages badge
-├── popup.html             # Extension popup — premium glassmorphic UI
-├── popup.js               # Popup logic — stats, toggles, log
-├── server.js              # WebSocket server + file writer + git backup
+├── manifest.json        # Chrome extension config (MV3)
+├── content.js           # Runs on AI chat pages — watches DOM, extracts code
+├── background.js        # Service worker — relays messages, manages badge
+├── popup.html           # Extension popup UI
+├── popup.js             # Popup logic — stats, toggles, activity log
+├── server.js            # WebSocket server + file writer + git backup
 ├── package.json
-├── generate-icons.js      # Icon generator (run once)
 ├── icons/
 │   ├── icon16.png
 │   ├── icon48.png
@@ -220,10 +153,8 @@ synapse/
 
 ## Tips
 
-- 🎯 Use `--output` flag to point at any project: `node server.js --output ~/projects/my-app`
-- 💾 Existing files are backed up (`.bak.timestamp`) before overwriting
-- 📌 Enable `--git` for git-based backup (auto-commits before changes)
-- 🔍 Use `--dry-run` to preview what would be written
-- 📦 Code is buffered in the extension if the server isn't running yet
-- 🌍 Works with any programming language
-- ⚡ Auto-reconnects with exponential backoff if server restarts
+- Point at any project: `node server.js --output ~/projects/my-app`
+- Use `--git` to auto-commit before every change (safe rollback)
+- Use `--dry-run` to preview what would be written without touching files
+- The extension auto-reconnects with exponential backoff if the server restarts
+- Works with any programming language

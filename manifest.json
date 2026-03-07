@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Synapse",
-  "version": "2.0.0",
-  "description": "The neural link between AI and your codebase — extracts code from AI chats in real-time and writes it to your project",
+  "version": "3.0.0",
+  "description": "The neural link between AI and your codebase — reads code from AI chats and auto-creates, writes, updates, and patches files to your project",
   "permissions": [
     "storage",
     "tabs",
@@ -38,6 +38,7 @@
       "js": [
         "content.js"
       ],
+      "all_frames": false,
       "run_at": "document_idle"
     }
   ],

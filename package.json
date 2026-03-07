@@ -1,7 +1,7 @@
 {
   "name": "synapse",
-  "version": "2.0.0",
-  "description": "Synapse — The neural link between AI and your codebase. Extracts code from AI chats in real-time.",
+  "version": "3.0.0",
+  "description": "Synapse — The neural link between AI and your codebase. Reads code from AI chats and auto-creates, writes, updates, and patches files.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
