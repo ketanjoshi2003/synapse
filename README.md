@@ -2,7 +2,7 @@
   <img src="icons/icon128.png" width="96" alt="Synapse">
 </p>
 
-# ⚡ Synapse
+# Synapse
 
 **The neural link between AI and your codebase.**
 
