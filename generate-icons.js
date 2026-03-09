@@ -26,12 +26,12 @@ function createPNG(size) {
     // Upper blade: top-right slanting down to mid-left
     // Lower blade: mid-right slanting down to bottom-left
     const boltPoly = [
-        [0.44, 0.04],  // top-left
-        [0.65, 0.04],  // top-right
+        [0.46, -0.05], // top-left
+        [0.67, -0.05], // top-right
         [0.53, 0.50],  // mid inner-right
         [0.65, 0.50],  // mid outer-right (step)
-        [0.54, 0.96],  // bottom-right
-        [0.33, 0.96],  // bottom-left
+        [0.52, 1.05],  // bottom-right
+        [0.31, 1.05],  // bottom-left
         [0.45, 0.50],  // mid outer-left (step)
         [0.33, 0.50],  // mid inner-left
     ];
