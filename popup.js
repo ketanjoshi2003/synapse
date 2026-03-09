@@ -80,8 +80,10 @@ chrome.storage.local.get([
   function checkDirectly(tab) {
     try {
       const port = portInput.value || 3131;
-      const ws = new WebSocket(`ws://localhost:${port}`);
-      ws.onopen = () => {
+      const pingWs = new WebSocket(`ws://localhost:${port}`);
+      let settled = false;
+      const settle = () => { if (!settled) { settled = true; try { pingWs.close(); } catch (_) { } } };
+      pingWs.onopen = () => {
         let meta = 'Ready / Waiting for AI tab';
         if (tab?.url) {
           const platforms = ['claude.ai', 'chat.openai.com', 'chatgpt.com', 'gemini.google',
@@ -92,12 +94,14 @@ chrome.storage.local.get([
           }
         }
         setStatus(true, null, serverInfo?.outputDir, meta);
-        ws.close();
+        settle();
       };
-      ws.onerror = () => {
+      pingWs.onerror = () => {
         setStatus(false, null, serverInfo?.outputDir);
         chrome.storage.local.set({ runtimeStatus: { connected: false, platform: null } });
+        settle();
       };
+      pingWs.onclose = () => { settle(); };
     } catch (e) {
       setStatus(false, null, serverInfo?.outputDir);
     }
@@ -140,10 +144,12 @@ autoSyncToggle.addEventListener('change', () => {
 
 dryRunToggle.addEventListener('change', () => {
   chrome.storage.local.set({ dryRun: dryRunToggle.checked });
+  broadcastToAITabs({ type: 'SET_CONFIG', dryRun: dryRunToggle.checked });
 });
 
 gitBackupToggle.addEventListener('change', () => {
   chrome.storage.local.set({ gitBackup: gitBackupToggle.checked });
+  broadcastToAITabs({ type: 'SET_CONFIG', gitBackup: gitBackupToggle.checked });
 });
 
 $('clearLogBtn').addEventListener('click', () => {
@@ -169,6 +175,8 @@ chrome.runtime.onMessage.addListener((msg) => {
       stats.errors++;
     }
     updateStats();
+    // Persist updated stats so they survive popup close/reopen
+    chrome.storage.local.set({ syncStats: stats });
     addLogEntry(msg.filename, msg.status, msg.mode, Date.now());
   }
   if (msg.type === 'WS_STATUS') {

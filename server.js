@@ -41,6 +41,23 @@ const MAX_HISTORY = 200;
 let totalSynced = 0;
 let totalErrors = 0;
 
+// Pending confirmations: Map<confirmId, { data, ws, mode, filename, timeout }>
+const pendingConfirmations = new Map();
+let confirmIdCounter = 0;
+const CONFIRM_TIMEOUT_MS = 60000; // 1 minute timeout for pending confirmations
+
+// Per-filename dedup: prevent multiple confirmations for the same file in quick succession
+const recentConfirmFiles = new Map(); // filename → timestamp
+const CONFIRM_FILE_DEDUP_WINDOW = 10000; // 10 seconds
+
+// Periodically clean up stale entries from the dedup map (every 30s)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of recentConfirmFiles) {
+    if (now - ts > CONFIRM_FILE_DEDUP_WINDOW) recentConfirmFiles.delete(key);
+  }
+}, 30000);
+
 // ─── Banner ───────────────────────────────────────────────────────────────────
 
 console.log(`
@@ -82,7 +99,7 @@ if (!fs.existsSync(configPath) && fs.existsSync(legacyConfigPath)) {
     if (cfg.gitBackup !== undefined) GIT_BACKUP = cfg.gitBackup;
     if (cfg.dryRun !== undefined) DRY_RUN = cfg.dryRun;
     console.log(`\x1b[32m📄 Loaded legacy config from .acs.config.json\x1b[0m\n`);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 // ─── File Tree ────────────────────────────────────────────────────────────────
@@ -132,6 +149,11 @@ wss.on('connection', (ws, req) => {
   const activeCount = wss.clients.size;
   console.log(`\x1b[34m🔌 Tab connected (${activeCount} active)\x1b[0m`);
 
+  // Per-client rate limiter: max 10 code_block messages per 5 seconds
+  const rateLimit = { count: 0, windowStart: Date.now() };
+  const RATE_LIMIT_MAX = 10;
+  const RATE_LIMIT_WINDOW = 5000;
+
   // Send server info
   ws.send(JSON.stringify({
     type: 'SERVER_INFO',
@@ -157,27 +179,174 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ type: 'pong' }));
         return;
       }
-      if (data.type === 'code_block') handleCodeBlock(data, ws);
+      if (data.type === 'code_block') {
+        // Rate limit code_block messages
+        const now = Date.now();
+        if (now - rateLimit.windowStart > RATE_LIMIT_WINDOW) {
+          rateLimit.count = 0;
+          rateLimit.windowStart = now;
+        }
+        rateLimit.count++;
+        if (rateLimit.count > RATE_LIMIT_MAX) {
+          console.log(`\x1b[33m⚠️  Rate limited: ${rateLimit.count} code_blocks in ${RATE_LIMIT_WINDOW}ms\x1b[0m`);
+          ws.send(JSON.stringify({
+            type: 'ACK', filename: data.filename || 'unknown', mode: 'rate_limited',
+            status: 'error', message: 'Rate limited — too many messages, slow down'
+          }));
+          return;
+        }
+        handleCodeBlock(data, ws);
+      }
+      if (data.type === 'confirm_response') handleConfirmResponse(data, ws);
       if (data.type === 'set_config') handleConfigUpdate(data, ws);
       if (data.type === 'request_file_tree') {
         const tree = getFileTree(OUTPUT_DIR);
         ws.send(JSON.stringify({ type: 'FILE_TREE', files: tree, count: tree.length }));
+      }
+      if (data.type === 'request_file_content') {
+        handleFileContentRequest(data, ws);
       }
     } catch (e) {
       console.error(`\x1b[31m❌ Parse error: ${e.message}\x1b[0m`);
     }
   });
 
-  ws.on('close', () => console.log('\x1b[34m🔌 Extension disconnected\x1b[0m'));
+  ws.on('close', () => {
+    // Clean up any pending confirmations for this client
+    for (const [id, pending] of pendingConfirmations) {
+      if (pending.ws === ws) {
+        clearTimeout(pending.timeout);
+        pendingConfirmations.delete(id);
+      }
+    }
+    console.log('\x1b[34m🔌 Extension disconnected\x1b[0m');
+  });
   ws.on('error', (e) => console.error(`\x1b[31mWS error: ${e.message}\x1b[0m`));
 });
 
 // ─── Config Update Handler ────────────────────────────────────────────────────
 
+function handleFileContentRequest(data, ws) {
+  const filename = data.filename;
+  if (!filename) {
+    ws.send(JSON.stringify({ type: 'FILE_CONTENT', filename: '', error: 'No filename provided' }));
+    return;
+  }
+  try {
+    const fullPath = safePath(filename);
+    if (!fs.existsSync(fullPath)) {
+      ws.send(JSON.stringify({ type: 'FILE_CONTENT', filename, error: 'File not found' }));
+      return;
+    }
+    const stat = fs.statSync(fullPath);
+    // Limit to 500KB to avoid flooding the WebSocket
+    if (stat.size > 500 * 1024) {
+      ws.send(JSON.stringify({ type: 'FILE_CONTENT', filename, error: 'File too large (>500KB)' }));
+      return;
+    }
+    const content = fs.readFileSync(fullPath, 'utf8');
+    const ext = path.extname(filename).slice(1) || 'txt';
+    ws.send(JSON.stringify({ type: 'FILE_CONTENT', filename, content, extension: ext, lines: content.split('\n').length }));
+    console.log(`\x1b[34m📄 Sent file content: ${filename} (${content.split('\n').length} lines)\x1b[0m`);
+  } catch (e) {
+    ws.send(JSON.stringify({ type: 'FILE_CONTENT', filename, error: e.message }));
+  }
+}
+
 function handleConfigUpdate(data, ws) {
   if (data.dryRun !== undefined) DRY_RUN = data.dryRun;
   if (data.gitBackup !== undefined) GIT_BACKUP = data.gitBackup;
   console.log(`\x1b[35m⚙️  Config updated: dryRun=${DRY_RUN}, gitBackup=${GIT_BACKUP}\x1b[0m`);
+}
+
+// ─── Confirmation Flow ────────────────────────────────────────────────────────
+
+function requestConfirmation(ws, filename, mode, preview, executeWrite, newCode) {
+  // Per-filename dedup: skip if a confirmation for this file is already pending or was recently handled
+  const now = Date.now();
+  const lastConfirm = recentConfirmFiles.get(filename);
+  if (lastConfirm && (now - lastConfirm) < CONFIRM_FILE_DEDUP_WINDOW) {
+    // Check if there's already an active confirmation for this file
+    for (const [, pending] of pendingConfirmations) {
+      if (pending.filename === filename && pending.ws === ws) {
+        console.log(`\x1b[33m⏭️  Skipped duplicate confirmation for ${filename}\x1b[0m`);
+        return;
+      }
+    }
+  }
+  recentConfirmFiles.set(filename, now);
+
+  const confirmId = ++confirmIdCounter;
+
+  const timeout = setTimeout(() => {
+    if (pendingConfirmations.has(confirmId)) {
+      pendingConfirmations.delete(confirmId);
+      console.log(`\x1b[33m⏰ Confirmation timed out: ${filename}\x1b[0m`);
+      ws.send(JSON.stringify({
+        type: 'ACK', filename, mode,
+        status: 'timeout', message: `Confirmation timed out for ${filename}`
+      }));
+    }
+  }, CONFIRM_TIMEOUT_MS);
+
+  pendingConfirmations.set(confirmId, { ws, filename, mode, executeWrite, timeout });
+
+  // Read existing file for diff preview (truncate if large)
+  let existingSnippet = null;
+  try {
+    const fullPath = safePath(filename);
+    if (fs.existsSync(fullPath)) {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const lines = content.split('\n');
+      // Send up to 80 lines for diff preview — enough for context, not a flood
+      existingSnippet = lines.length > 80 ? lines.slice(0, 80).join('\n') + '\n...' : content;
+    }
+  } catch (_) { }
+
+  // Send up to 80 lines of new code for preview
+  let newSnippet = null;
+  if (newCode) {
+    const lines = newCode.split('\n');
+    newSnippet = lines.length > 80 ? lines.slice(0, 80).join('\n') + '\n...' : newCode;
+  }
+
+  ws.send(JSON.stringify({
+    type: 'CONFIRM_WRITE',
+    confirmId,
+    filename,
+    mode,
+    preview,
+    existing: existingSnippet,
+    incoming: newSnippet
+  }));
+
+  console.log(`\x1b[33m⏳ Awaiting confirmation #${confirmId}: ${mode} → ${filename}\x1b[0m`);
+}
+
+function handleConfirmResponse(data, ws) {
+  const { confirmId, approved } = data;
+  const pending = pendingConfirmations.get(confirmId);
+  if (!pending) {
+    console.log(`\x1b[33m⚠️  Unknown/expired confirmation #${confirmId}\x1b[0m`);
+    return;
+  }
+
+  clearTimeout(pending.timeout);
+  pendingConfirmations.delete(confirmId);
+
+  if (!approved) {
+    console.log(`\x1b[31m✋ Rejected: ${pending.mode} → ${pending.filename}\x1b[0m`);
+    ws.send(JSON.stringify({
+      type: 'ACK', filename: pending.filename, mode: pending.mode,
+      status: 'rejected', message: `Write rejected by user`
+    }));
+    addHistory(pending.filename, pending.mode, 'rejected', 'User rejected');
+    return;
+  }
+
+  console.log(`\x1b[32m✅ Approved: ${pending.mode} → ${pending.filename}\x1b[0m`);
+  // Execute the actual write
+  pending.executeWrite();
 }
 
 // ─── Code Block Handler ──────────────────────────────────────────────────────
@@ -201,7 +370,8 @@ function handleCodeBlock(data, ws) {
   const { mode, filename } = processed;
   const modeColors = {
     overwrite: '\x1b[36m', patch: '\x1b[35m', insert: '\x1b[34m',
-    delete: '\x1b[31m', create: '\x1b[32m', search_replace: '\x1b[33m'
+    delete: '\x1b[31m', create: '\x1b[32m', search_replace: '\x1b[33m',
+    snippet_merge: '\x1b[32m', smart_patch: '\x1b[35m'
   };
   console.log(`\n${modeColors[mode] || ''}📦 ${mode.toUpperCase()} → ${filename}\x1b[0m`);
 
@@ -215,33 +385,55 @@ function handleCodeBlock(data, ws) {
     return;
   }
 
-  if (GIT_BACKUP && mode !== 'delete') gitCommitBefore(filename);
-
-  let result;
-  switch (mode) {
-    case 'search_replace': result = applySearchReplace(filename, processed.patches); break;
-    case 'patch': result = patchFile(filename, processed.patches); break;
-    case 'insert': result = insertLines(filename, processed.lineNumber, processed.code); break;
-    case 'delete': result = deleteLines(filename, processed.fromLine, processed.toLine); break;
-    default: result = writeFile(filename, processed.code); break;
+  // Build preview for confirmation
+  const exists = (() => { try { return fs.existsSync(safePath(filename)); } catch (_) { return false; } })();
+  let preview;
+  if (mode === 'snippet_merge') {
+    const snippetLines = processed.code.split('\n').length;
+    preview = `MERGE snippet (${snippetLines} lines) into existing file: ${filename}`;
+  } else if (mode === 'overwrite' && exists) {
+    try {
+      const existingLines = fs.readFileSync(safePath(filename), 'utf8').split('\n').length;
+      const newLines = processed.code.split('\n').length;
+      preview = `OVERWRITE entire file (${existingLines} → ${newLines} lines): ${filename}`;
+    } catch (_) {
+      preview = `OVERWRITE existing file: ${filename}`;
+    }
+  } else if (!exists) {
+    preview = `CREATE new file: ${filename}`;
+  } else {
+    preview = `${mode.toUpperCase()} file: ${filename}`;
   }
 
-  const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
-  console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
+  // Request confirmation before writing (pass newCode for diff preview)
+  requestConfirmation(ws, filename, mode, preview, () => {
+    if (GIT_BACKUP && mode !== 'delete') gitCommitBefore(filename);
 
-  if (result.success) totalSynced++; else totalErrors++;
-  addHistory(filename, mode, result.success ? 'ok' : 'error', result.message);
+    let result;
+    switch (mode) {
+      case 'search_replace': result = applySearchReplace(filename, processed.patches); break;
+      case 'smart_patch': result = applySmartPatch(filename, processed.code); break;
+      case 'snippet_merge': result = applySnippetMerge(filename, processed.code); break;
+      case 'patch': result = patchFile(filename, processed.patches); break;
+      case 'insert': result = insertLines(filename, processed.lineNumber, processed.code); break;
+      case 'delete': result = deleteLines(filename, processed.fromLine, processed.toLine); break;
+      default: result = writeFile(filename, processed.code); break;
+    }
 
-  ws.send(JSON.stringify({
-    type: 'ACK', filename, mode,
-    status: result.success ? 'ok' : 'error',
-    message: result.message
-  }));
+    const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
+    console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
 
-  // Refresh file tree after write
-  if (result.success) {
-    broadcastFileTree();
-  }
+    if (result.success) totalSynced++; else totalErrors++;
+    addHistory(filename, mode, result.success ? 'ok' : 'error', result.message);
+
+    ws.send(JSON.stringify({
+      type: 'ACK', filename, mode,
+      status: result.success ? 'ok' : 'error',
+      message: result.message
+    }));
+
+    if (result.success) debouncedBroadcastFileTree();
+  }, processed.code || null);
 }
 
 // ─── SEARCH/REPLACE Handler (from extension-detected blocks) ──────────────────
@@ -260,22 +452,27 @@ function handleSearchReplace(data, ws) {
     return;
   }
 
-  if (GIT_BACKUP) gitCommitBefore(filename);
+  const preview = `SEARCH/REPLACE: ${data.patches.length} edit(s) in ${filename}`;
+  const patchPreview = data.patches.map(p => `- "${p.find.split('\n')[0].slice(0, 40)}..." → "${p.replace.split('\n')[0].slice(0, 40)}..."`).join('\n');
 
-  const result = applySearchReplace(filename, data.patches);
-  const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
-  console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
+  requestConfirmation(ws, filename, 'search_replace', preview, () => {
+    if (GIT_BACKUP) gitCommitBefore(filename);
 
-  if (result.success) totalSynced++; else totalErrors++;
-  addHistory(filename, 'search_replace', result.success ? 'ok' : 'error', result.message);
+    const result = applySearchReplace(filename, data.patches);
+    const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
+    console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
 
-  ws.send(JSON.stringify({
-    type: 'ACK', filename, mode: 'search_replace',
-    status: result.success ? 'ok' : 'error',
-    message: result.message
-  }));
+    if (result.success) totalSynced++; else totalErrors++;
+    addHistory(filename, 'search_replace', result.success ? 'ok' : 'error', result.message);
 
-  if (result.success) broadcastFileTree();
+    ws.send(JSON.stringify({
+      type: 'ACK', filename, mode: 'search_replace',
+      status: result.success ? 'ok' : 'error',
+      message: result.message
+    }));
+
+    if (result.success) debouncedBroadcastFileTree();
+  }, patchPreview);
 }
 
 // ─── Smart Patch Handler (code with "...existing code..." markers) ────────────
@@ -293,34 +490,48 @@ function handleSmartPatch(data, ws) {
     return;
   }
 
-  if (GIT_BACKUP) gitCommitBefore(filename);
+  const preview = `SMART PATCH: merge snippet into ${filename}`;
 
-  const result = applySmartPatch(filename, data.code);
-  const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
-  console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
+  requestConfirmation(ws, filename, 'smart_patch', preview, () => {
+    if (GIT_BACKUP) gitCommitBefore(filename);
 
-  if (result.success) totalSynced++; else totalErrors++;
-  addHistory(filename, 'smart_patch', result.success ? 'ok' : 'error', result.message);
+    const result = applySmartPatch(filename, data.code);
+    const statusColor = result.success ? '\x1b[32m' : '\x1b[31m';
+    console.log(`   ${statusColor}${result.success ? '✅' : '❌'} ${result.message}\x1b[0m`);
 
-  ws.send(JSON.stringify({
-    type: 'ACK', filename, mode: 'smart_patch',
-    status: result.success ? 'ok' : 'error',
-    message: result.message
-  }));
+    if (result.success) totalSynced++; else totalErrors++;
+    addHistory(filename, 'smart_patch', result.success ? 'ok' : 'error', result.message);
 
-  if (result.success) broadcastFileTree();
+    ws.send(JSON.stringify({
+      type: 'ACK', filename, mode: 'smart_patch',
+      status: result.success ? 'ok' : 'error',
+      message: result.message
+    }));
+
+    if (result.success) debouncedBroadcastFileTree();
+  }, data.code);
 }
 
-// ─── Broadcast file tree to all connected clients ─────────────────────────────
+// ─── Broadcast file tree to all connected clients (debounced) ──────────────────
+
+let broadcastFileTreeTimer = null;
 
 function broadcastFileTree() {
   const tree = getFileTree(OUTPUT_DIR);
   const msg = JSON.stringify({ type: 'FILE_TREE', files: tree, count: tree.length });
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
-      try { client.send(msg); } catch (_) {}
+      try { client.send(msg); } catch (_) { }
     }
   }
+}
+
+function debouncedBroadcastFileTree() {
+  if (broadcastFileTreeTimer) clearTimeout(broadcastFileTreeTimer);
+  broadcastFileTreeTimer = setTimeout(() => {
+    broadcastFileTreeTimer = null;
+    broadcastFileTree();
+  }, 2000); // Coalesce rapid writes into a single tree broadcast
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -330,10 +541,32 @@ function addHistory(filename, mode, status, message) {
   if (history.length > MAX_HISTORY) history.pop();
 }
 
+// ─── Partial Snippet Detection ────────────────────────────────────────────────
+
+function looksLikePartialSnippet(code) {
+  // Explicit markers: // ... existing code, # ... rest of implementation, etc.
+  if (/(?:\/\/|#|--|\/\*|\*)\s*\.{2,}\s*(?:existing|rest|other|remaining|previous|more)\s+(?:code|content|implementation|file|logic|of the|unchanged)/i.test(code)) return true;
+  // Bare ellipsis on its own line: ..., …, // ..., # ..., /* ... */
+  if (/^\s*(?:\/\/|#|--|\/\*\s*)?\s*(?:\.{3,}|…)\s*(?:\*\/)?\s*$/m.test(code)) return true;
+  // HTML comment ellipsis: <!-- ... -->
+  if (/<!--\s*\.{3,}\s*-->/i.test(code)) return true;
+  // Truncation phrases: // (rest remains the same), # unchanged below, etc.
+  if (/(?:\/\/|#|--|\/\*|\*)\s*(?:\(?\s*(?:rest|remaining|unchanged|same as|keep|stays?|no changes?|untouched|omitted|truncated|snip|collapsed|hidden|abbreviated))/i.test(code)) return true;
+  return false;
+}
+
 // ─── Code Processor ───────────────────────────────────────────────────────────
 
 function processCode(raw, hintFilename) {
   let code = raw.replace(/^```[\w-]*\n/, '').replace(/\n```$/, '').trim();
+
+  // Strip bare language label from first line (ChatGPT/Claude DOM includes
+  // the code-block header as visible text, e.g., "HTML", "JavaScript")
+  const codeLines = code.split('\n');
+  if (/^(html|css|javascript|typescript|python|java|ruby|php|go|rust|c|cpp|c\+\+|c#|csharp|swift|kotlin|scala|r|sql|shell|bash|powershell|markdown|json|xml|yaml|toml|dockerfile|makefile|plaintext|jsx|tsx|js|ts|py|rb|rs|cs|sh|zsh|vue|svelte|dart|lua|perl|diff|patch|http|nginx|text)$/i.test(codeLines[0]?.trim())) {
+    codeLines.shift();
+    code = codeLines.join('\n').trim();
+  }
 
   // Strip SEARCH/REPLACE markers for filename extraction
   const cleanCode = code
@@ -417,7 +650,38 @@ function processCode(raw, hintFilename) {
     return { mode: 'delete', filename, fromLine: parseInt(deleteMatch[1]), toLine: parseInt(deleteMatch[2]) };
   }
 
-  // ── OVERWRITE MODE (default) ──
+  // ── SMART PATCH MODE (partial snippet detection) ──
+  // If the code has truncation/ellipsis markers, treat as smart patch
+  if (looksLikePartialSnippet(body)) {
+    return { mode: 'smart_patch', filename, code: body };
+  }
+
+  // ── SNIPPET GUARD — detect partial code for existing files ──
+  // If the file already exists and the new code is significantly smaller,
+  // it's almost certainly a snippet, not a full replacement.
+  try {
+    const existingPath = safePath(filename);
+    if (fs.existsSync(existingPath)) {
+      const existingContent = fs.readFileSync(existingPath, 'utf8');
+      const existingLines = existingContent.split('\n').length;
+      const newLines = body.split('\n').length;
+      const ratio = newLines / existingLines;
+
+      // Case 1: Tiny snippet (1-5 lines) targeting ANY existing file
+      // A 1-5 line block is virtually never a full file replacement.
+      // Route through snippet_merge which will fail safely if it can't match.
+      if (newLines <= 5 && existingLines > newLines) {
+        return { mode: 'snippet_merge', filename, code: body };
+      }
+
+      // Case 2: snippet is less than 60% of the existing file size
+      if (ratio < 0.6 && existingLines > 5) {
+        return { mode: 'snippet_merge', filename, code: body };
+      }
+    }
+  } catch (_) { /* file doesn't exist or blocked — fall through to overwrite (create) */ }
+
+  // ── OVERWRITE MODE (default — new files or full replacements) ──
   return { mode: 'overwrite', filename, code: body };
 }
 
@@ -518,7 +782,7 @@ function applySearchReplace(filename, patches) {
     for (const { find, replace } of patches) {
       // Try exact match first
       if (content.includes(find)) {
-        content = content.replace(find, replace);
+        content = content.split(find).join(replace);
         applied++;
         console.log(`   \x1b[33m🔧 Applied: "${find.split('\n')[0].slice(0, 50)}..."\x1b[0m`);
         continue;
@@ -573,8 +837,8 @@ function applySmartPatch(filename, rawCode) {
     }
     const cleanLines = codeLines.slice(startIdx);
 
-    // Detect "...existing code..." marker lines
-    const markerRegex = /^[ \t]*(?:\/\/|#|--|\/\*|\*)\s*\.{2,}\s*(?:existing|rest|other|remaining|previous|more)\s+(?:code|content|implementation)/i;
+    // Detect marker lines: "...existing code...", bare ellipsis, truncation phrases
+    const markerRegex = /^[ \t]*(?:\/\/|#|--|\/\*|\*)?\s*(?:\.{3,}|…)\s*(?:\*\/)?\s*$|^[ \t]*(?:\/\/|#|--|\/\*|\*)\s*\.{2,}\s*(?:existing|rest|other|remaining|previous|more)\s+(?:code|content|implementation|file|logic|of the|unchanged)|^[ \t]*<!--\s*\.{3,}\s*-->|^[ \t]*(?:\/\/|#|--|\/\*|\*)\s*(?:\(?\s*(?:rest|remaining|unchanged|same as|keep|stays?|no changes?|untouched|omitted|truncated|snip|collapsed|hidden|abbreviated))/i;
 
     if (!fs.existsSync(fullPath)) {
       // File doesn't exist — write without marker lines
@@ -665,14 +929,298 @@ function applySmartPatch(filename, rawCode) {
       return { success: true, message: `Smart-patched ${applied} section(s)` };
     }
 
-    // Fallback: if we couldn't match sections, overwrite the file
-    const fullCode = cleanLines.filter(l => !markerRegex.test(l)).join('\n').trim();
-    fs.writeFileSync(fullPath, fullCode + '\n', 'utf8');
-    return { success: true, message: `Updated ${filename} (fallback overwrite)` };
+    // Fallback: do NOT silently overwrite — partial snippets should never replace the full file
+    return { success: false, message: `Smart-patch failed: could not match any sections in ${filename}. Use SEARCH/REPLACE for precise edits.` };
 
   } catch (e) {
     return { success: false, message: e.message };
   }
+}
+
+// ─── Snippet Merge (auto-detected partial code without markers) ────────────────
+// This is the key intelligence: when AI outputs a snippet without any markers,
+// we figure out WHERE it belongs in the existing file and surgically replace
+// only that section — like Claude Code / Antigravity do.
+
+function applySnippetMerge(filename, snippetCode) {
+  try {
+    const fullPath = safePath(filename);
+    if (!fs.existsSync(fullPath)) {
+      // No existing file — create it
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, snippetCode + '\n', 'utf8');
+      return { success: true, message: `Created ${filename}` };
+    }
+
+    const existingContent = fs.readFileSync(fullPath, 'utf8');
+    const existingLines = existingContent.split('\n');
+    const snippetLines = snippetCode.split('\n');
+
+    // Strategy 1: Find the best matching region using first non-trivial line as anchor
+    // Look for function/class/method signatures, imports, or distinctive lines
+    const anchor = findBestAnchor(snippetLines);
+    if (anchor) {
+      const anchorResult = anchorMerge(existingLines, snippetLines, anchor);
+      if (anchorResult) {
+        fs.writeFileSync(fullPath, anchorResult.join('\n'), 'utf8');
+        return { success: true, message: `Merged snippet into ${filename} (anchor: line ${anchor.lineIdx + 1})` };
+      }
+    }
+
+    // Strategy 2: Sliding window similarity — find the region in the existing file
+    // that has the highest overlap with the snippet
+    const windowResult = slidingWindowMerge(existingLines, snippetLines);
+    if (windowResult) {
+      fs.writeFileSync(fullPath, windowResult.join('\n'), 'utf8');
+      return { success: true, message: `Merged snippet into ${filename} (similarity match)` };
+    }
+
+    // Strategy 3: Try fuzzy match on first 3 lines of snippet
+    const first3 = snippetLines.slice(0, 3).map(l => l.trim()).filter(l => l.length > 0).join('\n');
+    const fuzzyResult = fuzzyReplace(existingContent, first3, snippetCode);
+    if (fuzzyResult !== null) {
+      fs.writeFileSync(fullPath, fuzzyResult, 'utf8');
+      return { success: true, message: `Merged snippet into ${filename} (fuzzy match)` };
+    }
+
+    // Strategy 4: Structural line matching for tiny snippets (1–5 lines)
+    // Matches by tag name / key identifier rather than content value.
+    // Example: <title>New Title</title> replaces <title>Old Title</title>
+    if (snippetLines.filter(l => l.trim()).length <= 5) {
+      const structResult = structuralLineMatch(existingLines, snippetLines);
+      if (structResult) {
+        fs.writeFileSync(fullPath, structResult.join('\n'), 'utf8');
+        return { success: true, message: `Merged snippet into ${filename} (structural match)` };
+      }
+    }
+
+    return {
+      success: false,
+      message: `Snippet merge failed for ${filename}: could not find matching region. Snippet appears to be partial (${snippetLines.length} lines vs ${existingLines.length} in file). Use SEARCH/REPLACE markers for precise edits.`
+    };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+// ─── Structural line match for tiny snippets ──────────────────────────────────
+// For each non-empty snippet line, find the best matching existing line by
+// structure (same HTML tag, same CSS/JS key) and replace it in-place.
+// This handles cases like: <title>New</title> replacing <title>Old</title>
+
+function structuralLineMatch(existingLines, snippetLines) {
+  const result = [...existingLines];
+  let applied = 0;
+
+  for (const snippetLine of snippetLines) {
+    const trimmed = snippetLine.trim();
+    if (!trimmed) continue;
+
+    // ── HTML tag matching ──────────────────────────────────────────────────
+    // Matches <tagname>, <tagname attr>, <tagname>content</tagname>
+    const htmlTagMatch = trimmed.match(/^<([a-zA-Z][a-zA-Z0-9-]*)[\s>/]/);
+    if (htmlTagMatch) {
+      const tagName = htmlTagMatch[1].toLowerCase();
+      // Skip structural/block tags that shouldn't be replaced by a single-line snippet
+      const blockTags = new Set(['div', 'section', 'article', 'main', 'header', 'footer',
+        'nav', 'ul', 'ol', 'table', 'tbody', 'thead', 'tr', 'form', 'figure', 'html', 'body', 'head']);
+      if (!blockTags.has(tagName)) {
+        const idx = result.findIndex(l => {
+          const lt = l.trim().toLowerCase();
+          return lt.startsWith('<' + tagName + '>') ||
+            lt.startsWith('<' + tagName + ' ') ||
+            lt.startsWith('<' + tagName + '\t');
+        });
+        if (idx !== -1) {
+          const indent = result[idx].match(/^(\s*)/)[1];
+          result[idx] = indent + trimmed;
+          applied++;
+          console.log(`   \x1b[33m🔧 Structural HTML match: <${tagName}> at line ${idx + 1}\x1b[0m`);
+          continue;
+        }
+      }
+    }
+
+    // ── CSS property matching ──────────────────────────────────────────────
+    // Matches: property-name: value;
+    const cssPropMatch = trimmed.match(/^([\w-]+)\s*:\s*.+;?\s*$/);
+    if (cssPropMatch) {
+      const prop = cssPropMatch[1].toLowerCase();
+      const idx = result.findIndex(l => {
+        const lt = l.trim().toLowerCase();
+        return lt.startsWith(prop + ':') || lt.startsWith(prop + ' :');
+      });
+      if (idx !== -1) {
+        const indent = result[idx].match(/^(\s*)/)[1];
+        result[idx] = indent + trimmed;
+        applied++;
+        console.log(`   \x1b[33m🔧 Structural CSS match: "${prop}" at line ${idx + 1}\x1b[0m`);
+        continue;
+      }
+    }
+
+    // ── JS/JSON key-value matching ─────────────────────────────────────────
+    // Matches: key: value, key = value, "key": value
+    const kvMatch = trimmed.match(/^["']?([\w-]+)["']?\s*[:=]/);
+    if (kvMatch) {
+      const key = kvMatch[1];
+      const idx = result.findIndex(l => {
+        const lt = l.trim();
+        return lt.startsWith(`"${key}":`) || lt.startsWith(`'${key}':`) ||
+          lt.startsWith(`${key}:`) || lt.startsWith(`${key} :`) ||
+          lt.startsWith(`${key}=`) || lt.startsWith(`${key} =`);
+      });
+      if (idx !== -1) {
+        const indent = result[idx].match(/^(\s*)/)[1];
+        result[idx] = indent + trimmed;
+        applied++;
+        console.log(`   \x1b[33m🔧 Structural KV match: "${key}" at line ${idx + 1}\x1b[0m`);
+        continue;
+      }
+    }
+  }
+
+  return applied > 0 ? result : null;
+}
+
+// Find the most distinctive line in the snippet to use as an anchor
+function findBestAnchor(snippetLines) {
+  // Patterns that make good anchors (in priority order):
+  // function/class/method definitions, export statements, distinctive assignments
+  const anchorPatterns = [
+    /^\s*(?:export\s+)?(?:async\s+)?function\s+\w+/,           // function declarations
+    /^\s*(?:export\s+)?class\s+\w+/,                             // class declarations
+    /^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\(|function)/,  // arrow/function expressions
+    /^\s*(?:public|private|protected|static|async)\s+\w+\s*\(/,  // class methods
+    /^\s*\w+\s*\([^)]*\)\s*\{/,                                  // method shorthand
+    /^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=/,             // variable declarations
+    /^\s*(?:app|router|server)\.\w+\(/,                           // express-style routes
+    /^\s*(?:describe|it|test)\s*\(/,                              // test blocks
+    /^\s*(?:import|from|require)\s/,                              // imports
+  ];
+
+  for (const pattern of anchorPatterns) {
+    for (let i = 0; i < snippetLines.length; i++) {
+      if (pattern.test(snippetLines[i]) && snippetLines[i].trim().length > 8) {
+        return { lineIdx: i, text: snippetLines[i], trimmed: snippetLines[i].trim() };
+      }
+    }
+  }
+
+  // Fallback: first non-empty, non-trivial line (> 15 chars, not just braces/brackets)
+  for (let i = 0; i < snippetLines.length; i++) {
+    const t = snippetLines[i].trim();
+    if (t.length > 15 && !/^[{}\[\]();,]+$/.test(t)) {
+      return { lineIdx: i, text: snippetLines[i], trimmed: t };
+    }
+  }
+  return null;
+}
+
+// Use anchor to find where snippet belongs and replace that region
+function anchorMerge(existingLines, snippetLines, anchor) {
+  // Find the anchor line in the existing file
+  const anchorIdx = existingLines.findIndex(l => l.trim() === anchor.trimmed);
+  if (anchorIdx === -1) return null;
+
+  // The snippet starts `anchor.lineIdx` lines before the anchor
+  const mergeStart = Math.max(0, anchorIdx - anchor.lineIdx);
+
+  // Determine how far the snippet extends — find the end of the logical block
+  // Try to match the last line of the snippet in the existing file
+  const lastSnippetLine = [...snippetLines].reverse().find(l => l.trim().length > 0);
+  if (!lastSnippetLine) return null;
+
+  // Look for the last line of the snippet in the existing file, starting from anchor
+  let mergeEnd = -1;
+  for (let i = anchorIdx; i < Math.min(existingLines.length, anchorIdx + snippetLines.length + 20); i++) {
+    if (existingLines[i].trim() === lastSnippetLine.trim()) {
+      mergeEnd = i + 1;
+      // Don't break — prefer the last match within range (handles duplicate closing braces)
+    }
+  }
+
+  // If we can't find the last line, estimate the end based on snippet length
+  if (mergeEnd === -1) {
+    mergeEnd = Math.min(existingLines.length, mergeStart + snippetLines.length);
+  }
+
+  // Validate: the merge region should be similar in scope to the snippet
+  const regionSize = mergeEnd - mergeStart;
+  if (regionSize < 1) return null;
+
+  // Perform the merge
+  const result = [
+    ...existingLines.slice(0, mergeStart),
+    ...snippetLines,
+    ...existingLines.slice(mergeEnd)
+  ];
+  return result;
+}
+
+// Sliding window: find the region of the existing file most similar to the snippet
+function slidingWindowMerge(existingLines, snippetLines) {
+  if (snippetLines.length < 3 || existingLines.length < 3) return null;
+
+  const snippetNorm = snippetLines.map(l => l.trim()).filter(l => l.length > 0);
+  if (snippetNorm.length < 2) return null;
+
+  let bestStart = -1;
+  let bestScore = 0;
+  const windowSize = snippetLines.length;
+
+  // Slide a window of snippet-size over the existing file
+  for (let i = 0; i <= existingLines.length - Math.min(windowSize, 3); i++) {
+    let score = 0;
+    const compareLen = Math.min(windowSize, existingLines.length - i);
+
+    for (let j = 0; j < compareLen && j < snippetNorm.length; j++) {
+      const existTrimmed = existingLines[i + j].trim();
+      // Exact match
+      if (existTrimmed === snippetNorm[j]) {
+        score += 3;
+      }
+      // Partial match (line starts with same prefix)
+      else if (existTrimmed.length > 5 && snippetNorm[j].length > 5 &&
+        existTrimmed.substring(0, 20) === snippetNorm[j].substring(0, 20)) {
+        score += 1;
+      }
+    }
+
+    // Normalize by window size to get a ratio
+    const maxPossible = compareLen * 3;
+    const ratio = score / maxPossible;
+
+    if (score > bestScore && ratio > 0.3) { // At least 30% similarity
+      bestScore = score;
+      bestStart = i;
+    }
+  }
+
+  if (bestStart === -1) return null;
+
+  // Determine merge end — look for where the overlap stops
+  let mergeEnd = bestStart + windowSize;
+
+  // Refine: if the last snippet line matches somewhere, use that
+  const lastSnippet = snippetLines[snippetLines.length - 1].trim();
+  if (lastSnippet.length > 3) {
+    for (let i = bestStart + snippetLines.length - 1; i < Math.min(existingLines.length, bestStart + windowSize + 20); i++) {
+      if (existingLines[i].trim() === lastSnippet) {
+        mergeEnd = i + 1;
+        break;
+      }
+    }
+  }
+
+  mergeEnd = Math.min(mergeEnd, existingLines.length);
+
+  const result = [
+    ...existingLines.slice(0, bestStart),
+    ...snippetLines,
+    ...existingLines.slice(mergeEnd)
+  ];
+  return result;
 }
 
 // ─── Fuzzy text replacement ───────────────────────────────────────────────────
@@ -745,7 +1293,9 @@ function patchFile(filename, patches) {
         }
       }
     }
-    fs.writeFileSync(fullPath, content, 'utf8');
+    if (applied > 0) {
+      fs.writeFileSync(fullPath, content, 'utf8');
+    }
     return { success: applied > 0, message: `${applied}/${patches.length} patches applied` };
   } catch (e) { return { success: false, message: e.message }; }
 }

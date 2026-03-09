@@ -39,26 +39,47 @@ function createPNG(size) {
     for (let y = 0; y < size; y++) {
         const row = [];
         for (let x = 0; x < size; x++) {
-            const dx = (x - center) / center;
-            const dy = (y - center) / center;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            let r = 0, g = 0, b = 0;
+            const SUB = 4; // 4x4 multisampling
+            let alphaSum = 0;
 
-            if (dist < 0.85) {
-                const nx = x / size;
-                const ny = y / size;
-                const isBolt = pointInPoly(nx, ny, boltPoly);
+            for (let sy = 0; sy < SUB; sy++) {
+                for (let sx = 0; sx < SUB; sx++) {
+                    const nx = (x + (sx + 0.5) / SUB) / size;
+                    const ny = (y + (sy + 0.5) / SUB) / size;
 
-                if (isBolt) {
-                    row.push([0, 255, 136, 255]); // Green bolt
-                } else {
-                    const shade = Math.floor(15 + dist * 20);
-                    row.push([shade, shade, Math.floor(shade * 1.5), 255]);
+                    const dx = (nx - 0.5) * 2;
+                    const dy = (ny - 0.5) * 2;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    let pr = 0, pg = 0, pb = 0, pa = 0;
+
+                    if (dist < 0.95) {
+                        pa = 1;
+                        if (pointInPoly(nx, ny, boltPoly)) {
+                            pr = 0; pg = 255; pb = 136;
+                        } else {
+                            const shade = 15 + dist * 20;
+                            pr = shade; pg = shade; pb = shade * 1.5;
+                        }
+                    }
+
+                    r += pr * pa;
+                    g += pg * pa;
+                    b += pb * pa;
+                    alphaSum += pa;
                 }
-            } else if (dist < 0.95) {
-                const alpha = Math.max(0, 1 - (dist - 0.85) * 10);
-                row.push([0, Math.floor(255 * alpha * 0.5), Math.floor(136 * alpha * 0.5), Math.floor(255 * alpha)]);
-            } else {
+            }
+
+            if (alphaSum === 0) {
                 row.push([0, 0, 0, 0]);
+            } else {
+                row.push([
+                    Math.round(r / alphaSum),
+                    Math.round(g / alphaSum),
+                    Math.round(b / alphaSum),
+                    Math.round((alphaSum / (SUB * SUB)) * 255)
+                ]);
             }
         }
         canvas.push(row);

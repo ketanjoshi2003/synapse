@@ -4,10 +4,10 @@ const MAX_LOG = 50;
 
 // ─── Message handler ──────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Relay to popup if open
   if (['SYNC_EVENT', 'WS_STATUS', 'SERVER_INFO'].includes(msg.type)) {
-    chrome.runtime.sendMessage(msg).catch(() => {});
+    chrome.runtime.sendMessage(msg).catch(() => { });
   }
 
   // Persist sync events so log survives popup close/open
@@ -45,7 +45,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     chrome.storage.local.set({
       runtimeStatus: { connected: msg.connected, platform: msg.platform }
     });
-    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    // Always clear badge to keep the icon clean
+    chrome.action.setBadgeText({ text: '' }).catch(() => { });
   }
 
   // Persist server info
