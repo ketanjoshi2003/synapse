@@ -163,8 +163,15 @@
     }
 
     @keyframes ripple {
-      0% { transform: scale(0.8); opacity: 0.5; }
-      100% { transform: scale(2.4); opacity: 0; }
+      0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+      }
+
+      100% {
+        transform: scale(2.4);
+        opacity: 0;
+      }
     }
 
     .status-info {
@@ -464,8 +471,13 @@
       align-items: center;
     }
 
-    .note.info { color: var(--green); }
-    .note.error { color: var(--red); }
+    .note.info {
+      color: var(--green);
+    }
+
+    .note.error {
+      color: var(--red);
+    }
 
     /* ── Log ─────────────────────────────────────── */
     .log-wrap {
@@ -501,8 +513,14 @@
       transition: color 0.2s;
     }
 
-    .log-clear:hover { color: var(--text-primary); }
-    .log-clear:disabled { color: var(--bg-elevated); cursor: default; }
+    .log-clear:hover {
+      color: var(--text-primary);
+    }
+
+    .log-clear:disabled {
+      color: var(--bg-elevated);
+      cursor: default;
+    }
 
     #log {
       max-height: 140px;
@@ -510,7 +528,9 @@
       scrollbar-width: none;
     }
 
-    #log::-webkit-scrollbar { display: none; }
+    #log::-webkit-scrollbar {
+      display: none;
+    }
 
     .log-entry {
       display: flex;
@@ -540,7 +560,7 @@
     .log-mode {
       font-size: 9px;
       color: var(--text-muted);
-      background: rgba(255,255,255,0.05);
+      background: rgba(255, 255, 255, 0.05);
       border-radius: 3px;
       padding: 1px 5px;
       flex-shrink: 0;
@@ -568,7 +588,7 @@
 
 <body>
   <div class="header">
-    <img src="icons/icon128.png" alt="Synapse">
+    <img src="icons/icon512.png" alt="Synapse">
     <div class="header-content">
       <h1>Synapse</h1>
       <p>AI to codebase neural link</p>

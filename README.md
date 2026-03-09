@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icons/icon128.png" width="96" alt="Synapse">
+  <img src="icons/icon512.png" width="96" alt="Synapse">
 </p>
 
 # Synapse
@@ -149,7 +149,8 @@ synapse/
 ├── icons/
 │   ├── icon16.png
 │   ├── icon48.png
-│   └── icon128.png
+│   ├── icon128.png
+│   └── icon512.png
 └── README.md
 ```
 
