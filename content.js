@@ -483,7 +483,100 @@
     // (e.g. sidebar, settings) as false positives.
     if (containers.length === 0) return;
 
-    containers.forEach(c => c.querySelectorAll('pre code, pre').forEach(processBlock));
+    containers.forEach(c => {
+      const pres = Array.from(c.querySelectorAll('pre'));
+      const skip = new Set();
+
+      for (let i = 0; i < pres.length; i++) {
+        if (skip.has(pres[i])) continue;
+
+        let pre1 = pres[i];
+
+        // Try pairing with the next block for ChatGPT's "Replace / with" diff pattern
+        if (i + 1 < pres.length) {
+          let pre2 = pres[i + 1];
+          try {
+            let range = document.createRange();
+            range.setStartAfter(pre1);
+            range.setEndBefore(pre2);
+            let between = range.toString().trim().toLowerCase();
+
+            // Check text directly above the first block
+            let prevElText = (pre1.previousElementSibling && pre1.previousElementSibling.textContent ? pre1.previousElementSibling.textContent : '').trim().toLowerCase();
+            let prevNodeText = (pre1.previousSibling && pre1.previousSibling.textContent ? pre1.previousSibling.textContent : '').trim().toLowerCase();
+
+            if (between === 'with' || between === 'with:') {
+              if (prevElText.endsWith('replace:') || prevElText.endsWith('replace') ||
+                prevNodeText.endsWith('replace:') || prevNodeText.endsWith('replace')) {
+
+                processSearchReplacePair(pre1, pre2);
+                skip.add(pre1);
+                skip.add(pre2);
+                continue;
+              }
+            }
+          } catch (e) { }
+        }
+
+        processBlock(pres[i].querySelector('code') || pres[i]);
+      }
+    });
+  }
+
+  function processSearchReplacePair(pre1, pre2) {
+    let raw1 = (pre1.querySelector('code') || pre1).innerText?.trim();
+    let raw2 = (pre2.querySelector('code') || pre2).innerText?.trim();
+    if (!raw1 || !raw2) return;
+
+    const stripLang = (codeStr) => {
+      const lines = codeStr.split('\n');
+      if (/^(html|css|javascript|typescript|python|java|ruby|php|go|rust|c|cpp|c\+\+|c#|csharp|swift|kotlin|scala|r|sql|shell|bash|powershell|markdown|json|xml|yaml|toml|dockerfile|makefile|plaintext|plain text|text|jsx|tsx|js|ts|py|rb|rs|cs|sh|zsh|vue|svelte|dart|lua|perl|elixir|clojure|haskell|ocaml|zig|nim|groovy|assembly|asm|coffeescript|scss|sass|less|graphql|proto|protobuf|matlab|fortran|cobol|ada|vhdl|verilog|tcl|cmake|csv|ini|cfg|conf|env|bat|ps1|fish|diff|patch|http|nginx)$/i.test(lines[0]?.trim())) {
+        lines.shift();
+        return lines.join('\n').trim();
+      }
+      return codeStr;
+    };
+
+    raw1 = stripLang(raw1);
+    raw2 = stripLang(raw2);
+
+    const h = hash(raw1 + raw2);
+    if (sentHashes.has(h)) return;
+
+    let filename = extractFilenameFromFence(pre1) || extractFilenameFromComment(raw1) || extractFilenameFromDOM(pre1) || extractFilenameFromContext(pre1);
+
+    // Explicitly check for ChatGPT "Canvas" UI which renders files as "1 index.html" before the replace blocks
+    if (!filename) {
+      let msg = pre1.closest('[data-message-author-role="assistant"], .agent-turn, article');
+      if (msg) {
+        let walker = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while (node = walker.nextNode()) {
+          const txt = node.textContent.trim();
+          const match = txt.match(/^1\s+([\w][\w/\\\-.]*\.\w{1,10})$/) || txt.match(/^([\w][\w/\\\-.]*\.\w{1,10})$/);
+          if (match && pre1.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING) {
+            filename = match[1];
+          }
+        }
+      }
+    }
+
+    if (!filename) return;
+    filename = resolveFilename(filename);
+    if (!filename) return;
+
+    sentHashes.add(h);
+    chrome.storage.local.set({ synapseHashes: [...sentHashes].slice(-500) });
+
+    sendToServer({
+      type: 'code_block', timestamp: Date.now(),
+      language: detectLanguage(pre1), filename, code: raw2,
+      mode: 'search_replace', patches: [{ find: raw1, replace: raw2 }],
+      platform: PLATFORM, conversationId: getConversationId()
+    });
+
+    glow(pre1); glow(pre2);
+    console.log(`[Synapse] → SEARCH/REPLACE Pair: ${filename}`);
   }
 
   // ─── Process a single code block ──────────────────────────────────────────────
@@ -517,14 +610,7 @@
     filename = resolveFilename(filename);
     if (!filename) return;
 
-    // Per-filename dedup: skip if we already sent this file recently
-    const now = Date.now();
-    const lastSent = recentSentFiles.get(filename);
-    if (lastSent && (now - lastSent) < FILE_DEDUP_WINDOW) {
-      console.log(`[Synapse] Skipped duplicate: ${filename} (sent ${Math.round((now - lastSent) / 1000)}s ago)`);
-      return;
-    }
-    recentSentFiles.set(filename, now);
+
 
     sentHashes.add(h);
     chrome.storage.local.set({ synapseHashes: [...sentHashes].slice(-500) });
