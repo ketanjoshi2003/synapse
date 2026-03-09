@@ -988,7 +988,7 @@
     cursor: pointer; transition: all .2s cubic-bezier(0.16,1,0.3,1);
     box-shadow: 0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
   `;
-    btn.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon128.png')}" style="width: 100%; height: 100%; border-radius: 50%; pointer-events: none;">`;
+    btn.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon512.png')}" style="width: 100%; height: 100%; border-radius: 50%; pointer-events: none;">`;
     btn.title = 'Synapse: Share file with AI (Ctrl+Shift+F)';
 
     btn.addEventListener('mouseenter', () => {

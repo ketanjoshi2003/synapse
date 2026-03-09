@@ -40,7 +40,7 @@ function createPNG(size) {
         const row = [];
         for (let x = 0; x < size; x++) {
             let r = 0, g = 0, b = 0;
-            const SUB = 4; // 4x4 multisampling
+            const SUB = 8; // 8x8 multisampling = 64 subpixels per pixel
             let alphaSum = 0;
 
             for (let sy = 0; sy < SUB; sy++) {
@@ -54,11 +54,13 @@ function createPNG(size) {
 
                     let pr = 0, pg = 0, pb = 0, pa = 0;
 
-                    if (dist < 0.95) {
+                    if (dist <= 0.98) { // Perfect circle outline maxing edge without clipping
                         pa = 1;
                         if (pointInPoly(nx, ny, boltPoly)) {
+                            // Bolt is pure vibrant green
                             pr = 0; pg = 255; pb = 136;
                         } else {
+                            // Dark gradient back panel
                             const shade = 15 + dist * 20;
                             pr = shade; pg = shade; pb = shade * 1.5;
                         }
@@ -175,7 +177,7 @@ function encodePNG(pixels, width, height) {
 }
 
 // Generate icons
-const sizes = [16, 48, 128];
+const sizes = [16, 48, 128, 512];
 const iconsDir = path.join(__dirname, 'icons');
 
 for (const size of sizes) {
