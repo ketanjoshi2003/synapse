@@ -753,7 +753,7 @@
     width: 300px; border-radius: 12px; overflow: hidden;
     background: rgba(10,10,10,0.85); backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 16px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.08);
     transform: translateX(calc(100% + 32px));
     transition: transform .4s cubic-bezier(0.16,1,0.3,1), opacity .4s;
     opacity: 0; font-family: 'Inter', -apple-system, sans-serif;
