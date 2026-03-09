@@ -11,10 +11,20 @@
   let wsPort = 3131;
   let isConnected = false;
   let autoSync = true;
-  // In-memory only — NOT persisted across page loads.
-  // Each page session starts fresh to ensure code blocks from the current
-  // conversation are always synced, regardless of past history.
+  // Hashes are tracking to avoid duplicate syncs.
+  // We persist these in chrome.storage.local so they survive page refreshes.
   let sentHashes = new Set();
+
+  function addSentHash(h) {
+    if (sentHashes.has(h)) return;
+    sentHashes.add(h);
+    const hashArr = Array.from(sentHashes);
+    if (hashArr.length > 500) {
+      hashArr.splice(0, hashArr.length - 500); // keep last 500
+      sentHashes = new Set(hashArr);
+    }
+    chrome.storage.local.set({ synapseHashes: hashArr });
+  }
   let pendingCode = [];
   let reconnectDelay = 2000;
   const MIN_RECONNECT_DELAY = 2000;
@@ -557,7 +567,7 @@
     filename = resolveFilename(filename);
     if (!filename) return;
 
-    sentHashes.add(h);
+    addSentHash(h);
 
     sendToServer({
       type: 'code_block', timestamp: Date.now(),
@@ -624,7 +634,7 @@
 
 
 
-    sentHashes.add(h);
+    addSentHash(h);
 
     // Detect SEARCH/REPLACE blocks
     const srBlocks = parseSearchReplaceBlocks(raw);
@@ -1084,18 +1094,18 @@
     width: 44px; height: 44px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; transition: all .2s cubic-bezier(0.16,1,0.3,1);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+    box-shadow: 0 0px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
   `;
     btn.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon512.png')}" style="width: 100%; height: 100%; border-radius: 50%; pointer-events: none;">`;
     btn.title = 'Synapse: Share file with AI (Ctrl+Shift+F)';
 
     btn.addEventListener('mouseenter', () => {
       btn.style.transform = 'scale(1.08) translateY(-2px)';
-      btn.style.boxShadow = '0 10px 24px rgba(16,185,129,0.25), 0 0 0 1px rgba(16,185,129,0.3)';
+      btn.style.boxShadow = '0 0px 24px rgba(16,185,129,0.35), 0 0 0 1px rgba(16,185,129,0.3)';
     });
     btn.addEventListener('mouseleave', () => {
       btn.style.transform = 'scale(1) translateY(0)';
-      btn.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05)';
+      btn.style.boxShadow = '0 0px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05)';
     });
     btn.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }).catch(() => {
@@ -1308,7 +1318,7 @@
       sendResponse({ connected: isConnected, platform: PLATFORM, autoSync, queueSize: pendingCode.length });
       return true;
     }
-    if (msg.type === 'SCAN_NOW') { sentHashes.clear(); extractCodeBlocks(); }
+    if (msg.type === 'SCAN_NOW') { extractCodeBlocks(); }
     if (msg.type === 'GET_FILE_TREE') {
       sendResponse({ files: projectFiles, connected: isConnected });
       return true;
@@ -1380,11 +1390,11 @@
 
   // ─── Init ─────────────────────────────────────────────────────────────────────
 
-  chrome.storage.local.get(['wsPort', 'autoSync'], (r) => {
+  chrome.storage.local.get(['wsPort', 'autoSync', 'synapseHashes'], (r) => {
     if (r.wsPort) wsPort = r.wsPort;
     if (r.autoSync !== undefined) autoSync = r.autoSync;
-    // Hashes are NOT restored — each page session starts fresh so code blocks
-    // in the current conversation are always synced correctly.
+    if (r.synapseHashes) sentHashes = new Set(r.synapseHashes);
+    // Hashes are now restored per-session unless explicitly cleared via the popup
     connectWebSocket();
     console.log(`[Synapse] Init on ${PLATFORM}`);
 
