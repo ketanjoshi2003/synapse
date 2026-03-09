@@ -982,7 +982,7 @@
     const btn = document.createElement('div');
     btn.id = '__synapse-fab';
     btn.style.cssText = `
-    position: fixed; bottom: 24px; left: 24px; z-index: 2147483646;
+    position: fixed; bottom: 24px; right: 24px; z-index: 2147483646;
     width: 44px; height: 44px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; transition: all .2s cubic-bezier(0.16,1,0.3,1);
