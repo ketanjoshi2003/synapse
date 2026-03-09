@@ -5,6 +5,12 @@ const MAX_LOG = 50;
 // ─── Message handler ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Open the extension popup (triggered by FAB click in content script)
+  if (msg.type === 'OPEN_POPUP') {
+    chrome.action.openPopup().catch(() => { /* Chrome < 127 or popup already open */ });
+    return;
+  }
+
   // Relay to popup if open
   if (['SYNC_EVENT', 'WS_STATUS', 'SERVER_INFO'].includes(msg.type)) {
     chrome.runtime.sendMessage(msg).catch(() => { });

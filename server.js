@@ -61,14 +61,16 @@ setInterval(() => {
 // ─── Banner ───────────────────────────────────────────────────────────────────
 
 console.log(`
-\x1b[36m╔══════════════════════════════════════════════════╗
-║            \x1b[32m//\x1b[36m Synapse — Server v3.0              ║
-╠══════════════════════════════════════════════════╣\x1b[0m
-\x1b[37m║ WebSocket Port : \x1b[33m${PORT.toString().padEnd(32)}\x1b[37m║
-║ Output Dir     : \x1b[33m${OUTPUT_DIR.length > 32 ? '...' + OUTPUT_DIR.slice(-29) : OUTPUT_DIR.padEnd(32)}\x1b[37m║
-║ Git Backup     : \x1b[33m${(GIT_BACKUP ? 'ON' : 'OFF').padEnd(32)}\x1b[37m║
-║ Dry-Run Mode   : \x1b[33m${(DRY_RUN ? 'ON' : 'OFF').padEnd(32)}\x1b[37m║
-\x1b[36m╚══════════════════════════════════════════════════╝\x1b[0m
+\x1b[36m╔════════════════════════════════════════════════════╗
+║  \x1b[32m▐█▌\x1b[36m                                               ║
+║  \x1b[32m ██\x1b[36m    \x1b[1;37mSynapse\x1b[0;36m  \x1b[2;37mv3.0  -  Server\x1b[0;36m                   ║
+║  \x1b[32m▐█▌\x1b[36m                                               ║
+╠════════════════════════════════════════════════════╣\x1b[0m
+\x1b[37m║  WebSocket Port  :  \x1b[33m${PORT.toString().padEnd(31)}\x1b[37m║
+║  Output Dir      :  \x1b[33m${OUTPUT_DIR.length > 31 ? '...' + OUTPUT_DIR.slice(-28) : OUTPUT_DIR.padEnd(31)}\x1b[37m║
+║  Git Backup      :  \x1b[33m${(GIT_BACKUP ? 'ON' : 'OFF').padEnd(31)}\x1b[37m║
+║  Dry-Run Mode    :  \x1b[33m${(DRY_RUN ? 'ON' : 'OFF').padEnd(31)}\x1b[37m║
+\x1b[36m╚════════════════════════════════════════════════════╝\x1b[0m
 `);
 
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -748,7 +750,8 @@ function parseUnifiedDiff(diffText) {
 function safePath(filename) {
   const normalized = filename.replace(/\\/g, '/').replace(/^\//, '');
   const resolved = path.resolve(OUTPUT_DIR, normalized);
-  if (!resolved.startsWith(path.resolve(OUTPUT_DIR))) {
+  const expectedDir = path.resolve(OUTPUT_DIR) + path.sep;
+  if (!resolved.startsWith(expectedDir) && resolved !== path.resolve(OUTPUT_DIR)) {
     throw new Error(`Path traversal blocked: ${filename}`);
   }
   const BLOCKED = ['manifest.json', 'content.js', 'background.js', 'popup.js', 'popup.html', 'package-lock.json'];

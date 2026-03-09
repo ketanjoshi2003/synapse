@@ -175,8 +175,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       stats.errors++;
     }
     updateStats();
-    // Persist updated stats so they survive popup close/reopen
-    chrome.storage.local.set({ syncStats: stats });
+    // Background script handles persisting the updated stats to storage
     addLogEntry(msg.filename, msg.status, msg.mode, Date.now());
   }
   if (msg.type === 'WS_STATUS') {
@@ -265,3 +264,237 @@ function addLogEntry(filename, status, mode, timestamp) {
 
   while (log.children.length > 50) log.removeChild(log.lastChild);
 }
+
+// ─── Manage Storage ────────────────────────────────────────────────────────────
+
+const storageToggle = $('storageToggle');
+const storageCaret = $('storageCaret');
+const storageBody = $('storageBody');
+const storageInfo = $('storageInfo');
+
+function refreshStorageInfo() {
+  chrome.storage.local.get(null, (data) => {
+    const keys = Object.keys(data);
+    const hashCount = Array.isArray(data.synapseHashes) ? data.synapseHashes.length : 0;
+    const logCount = Array.isArray(data.syncLog) ? data.syncLog.length : 0;
+    const hasServerInfo = !!data.serverInfo;
+    const totalKeys = keys.length;
+    storageInfo.innerHTML =
+      `Saved hashes: <strong>${hashCount}</strong>&nbsp;&nbsp;|&nbsp;&nbsp;` +
+      `Log entries: <strong>${logCount}</strong>&nbsp;&nbsp;|&nbsp;&nbsp;` +
+      `Total keys: <strong>${totalKeys}</strong>` +
+      (hasServerInfo ? `<br>Last server: <strong>${data.serverInfo?.outputDir || '—'}</strong>` : '');
+  });
+}
+
+storageToggle.addEventListener('click', () => {
+  const isOpen = storageBody.classList.toggle('open');
+  storageCaret.classList.toggle('open', isOpen);
+  if (isOpen) refreshStorageInfo();
+});
+
+function flashBtn(btn, label) {
+  const orig = btn.innerHTML;
+  btn.innerHTML = `<span class="storage-btn-icon">✓</span> ${label}`;
+  btn.style.color = 'var(--green)';
+  setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1800);
+}
+
+// Clear only the in-extension duplicate-check hash memory
+$('clearHashesBtn').addEventListener('click', () => {
+  const btn = $('clearHashesBtn');
+  chrome.storage.local.remove('synapseHashes', () => {
+    // Also tell any open AI tabs to clear their in-memory hash cache
+    broadcastToAITabs({ type: 'CLEAR_CACHE' });
+    flashBtn(btn, 'Hash memory cleared');
+    refreshStorageInfo();
+  });
+});
+
+// Clear log + stats (same as the log "clear" button, but via storage management)
+$('clearLogStorageBtn').addEventListener('click', () => {
+  const btn = $('clearLogStorageBtn');
+  log.innerHTML = '<div class="log-empty">No sync activity yet.</div>';
+  stats = { created: 0, updated: 0, patches: 0, errors: 0 };
+  chrome.storage.local.set({ syncStats: stats, syncLog: [] }, () => {
+    updateStats();
+    flashBtn(btn, 'Log & stats cleared');
+    refreshStorageInfo();
+  });
+});
+
+// Wipe all Synapse data
+$('clearAllStorageBtn').addEventListener('click', () => {
+  const btn = $('clearAllStorageBtn');
+  if (!btn.dataset.confirm) {
+    btn.innerHTML = '<span class="storage-btn-icon">⚠</span> Tap again to confirm wipe';
+    btn.dataset.confirm = '1';
+    btn.style.color = 'var(--red)';
+    setTimeout(() => {
+      delete btn.dataset.confirm;
+      btn.innerHTML = '<span class="storage-btn-icon">⚠</span> Clear ALL Synapse data';
+      btn.style.color = '';
+    }, 3000);
+    return;
+  }
+  chrome.storage.local.clear(() => {
+    broadcastToAITabs({ type: 'CLEAR_CACHE' });
+    log.innerHTML = '<div class="log-empty">No sync activity yet.</div>';
+    stats = { created: 0, updated: 0, patches: 0, errors: 0 };
+    updateStats();
+    flashBtn(btn, 'All data wiped');
+    refreshStorageInfo();
+  });
+});
+
+// ─── Tab switching ─────────────────────────────────────────────────────────────
+
+const viewSync = document.getElementById('viewSync');
+const viewFiles = document.getElementById('viewFiles');
+const tabSync = $('tabSync');
+const tabFiles = $('tabFiles');
+
+tabSync.addEventListener('click', () => {
+  tabSync.classList.add('active');
+  tabFiles.classList.remove('active');
+  viewSync.style.display = '';
+  viewFiles.classList.remove('active');
+});
+
+tabFiles.addEventListener('click', () => {
+  tabFiles.classList.add('active');
+  tabSync.classList.remove('active');
+  viewSync.style.display = 'none';
+  viewFiles.classList.add('active');
+  loadFileTree();
+});
+
+// ─── Files View ────────────────────────────────────────────────────────────────
+
+const filesStatusDot = document.getElementById('filesStatusDot');
+const filesStatusText = document.getElementById('filesStatusText');
+const filesCountEl = document.getElementById('filesCount');
+const filesSearch = document.getElementById('filesSearch');
+const filesInjectStatus = document.getElementById('filesInjectStatus');
+
+let allFiles = [];
+let filesTargetTabId = null;
+
+function fileIcon(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  const icons = {
+    js: '🟨', ts: '🔷', jsx: '🟦', tsx: '🔷', py: '🐍', go: '🐹',
+    rs: '🦀', java: '☕', css: '🎨', scss: '🎨', html: '🌐',
+    json: '📋', md: '📝', sh: '💻', yaml: '📄', yml: '📄',
+    env: '🔒', sql: '🗄', vue: '💚', svelte: '🔶', php: '🐘',
+    rb: '💎', swift: '🅂', kt: '🅺', c: '🔵', cpp: '🔵', cs: '🔵',
+  };
+  return icons[ext] || '📄';
+}
+
+function renderFiles(files) {
+  const list = document.getElementById('filesList');
+  if (!files || files.length === 0) {
+    list.innerHTML = '<div class="files-empty-msg">No files found.</div>';
+    return;
+  }
+  list.innerHTML = files.map(f => {
+    const short = f.length > 52 ? '...' + f.slice(-50) : f;
+    const esc = short.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="file-item" data-file="${f.replace(/"/g, '&quot;')}">
+      <span class="file-icon">${fileIcon(f)}</span>${esc}
+    </div>`;
+  }).join('');
+}
+
+function onFileClick(e) {
+  const item = e.target.closest('.file-item');
+  if (!item) return;
+  const file = item.getAttribute('data-file');
+  if (!file || !filesTargetTabId) return;
+
+  item.classList.add('injected');
+  chrome.tabs.sendMessage(filesTargetTabId, { type: 'INJECT_FILE', filename: file }, (res) => {
+    if (chrome.runtime.lastError || (res && res.error)) {
+      filesStatusText.textContent = 'Inject failed — ensure AI tab is active';
+      filesStatusDot.className = 'files-status-dot off';
+    } else {
+      filesInjectStatus.classList.add('show');
+      setTimeout(() => filesInjectStatus.classList.remove('show'), 2000);
+    }
+    setTimeout(() => item.classList.remove('injected'), 1500);
+  });
+}
+
+function loadFileTree() {
+  // Find the active AI tab to pull the file tree from
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab) {
+      setFilesState(false, 'No active tab found', []);
+      return;
+    }
+
+    const AI_PATTERNS = [
+      'claude.ai', 'chat.openai.com', 'chatgpt.com', 'gemini.google',
+      'chat.deepseek', 'copilot.microsoft', 'grok.x.ai', 'poe.com',
+      'chat.mistral', 'huggingface.co'
+    ];
+
+    const isAI = tab.url && AI_PATTERNS.some(p => tab.url.includes(p));
+
+    chrome.tabs.sendMessage(tab.id, { type: 'GET_FILE_TREE' }, (res) => {
+      if (chrome.runtime.lastError || !res) {
+        if (isAI) {
+          setFilesState(false, 'AI tab found but not connected — reload the tab', []);
+        } else {
+          // Try scanning all windows for an AI tab
+          chrome.tabs.query({}, (allTabs) => {
+            const aiTab = allTabs.find(t => t.url && AI_PATTERNS.some(p => t.url.includes(p)));
+            if (!aiTab) {
+              setFilesState(false, 'No AI tab open — open Claude, ChatGPT etc.', []);
+              return;
+            }
+            chrome.tabs.sendMessage(aiTab.id, { type: 'GET_FILE_TREE' }, (res2) => {
+              if (chrome.runtime.lastError || !res2) {
+                setFilesState(false, 'AI tab found but not connected', []);
+              } else {
+                filesTargetTabId = aiTab.id;
+                setFilesState(res2.connected, res2.connected ? 'Connected' : 'Server offline', res2.files || []);
+              }
+            });
+          });
+        }
+        return;
+      }
+      filesTargetTabId = tab.id;
+      setFilesState(res.connected, res.connected ? 'Ready to inject' : 'Server offline', res.files || []);
+    });
+  });
+}
+
+function setFilesState(connected, statusMsg, files) {
+  allFiles = files;
+  filesStatusDot.className = 'files-status-dot ' + (connected ? 'on' : 'off');
+  filesStatusText.textContent = statusMsg;
+  filesCountEl.textContent = files.length + ' files';
+  renderFiles(files);
+
+  // Attach a single delegated click listener on the list container
+  const list = document.getElementById('filesList');
+  // clone to strip any old listeners, then re-attach
+  const clone = list.cloneNode(true);
+  list.parentNode.replaceChild(clone, list);
+  document.getElementById('filesList').addEventListener('click', onFileClick);
+
+  // Auto-focus search
+  setTimeout(() => filesSearch.focus(), 50);
+}
+
+// Search filtering
+filesSearch.addEventListener('input', () => {
+  const q = filesSearch.value.toLowerCase().trim();
+  if (!q) { renderFiles(allFiles); return; }
+  const filtered = allFiles.filter(f => f.toLowerCase().includes(q));
+  renderFiles(filtered);
+});

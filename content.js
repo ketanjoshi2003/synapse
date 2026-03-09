@@ -11,14 +11,11 @@
   let wsPort = 3131;
   let isConnected = false;
   let autoSync = true;
+  // In-memory only — NOT persisted across page loads.
+  // Each page session starts fresh to ensure code blocks from the current
+  // conversation are always synced, regardless of past history.
   let sentHashes = new Set();
-  const HASH_STORAGE_KEY = 'synapseHashes';
   let pendingCode = [];
-
-  // Per-filename dedup: prevents the same file from being sent multiple times
-  // during a single AI response stream (DOM re-renders trigger re-extraction)
-  const recentSentFiles = new Map(); // filename → timestamp
-  const FILE_DEDUP_WINDOW = 15000;   // 15 seconds between sends for same filename
   let reconnectDelay = 2000;
   const MIN_RECONNECT_DELAY = 2000;
   const MAX_RECONNECT_DELAY = 30000;
@@ -53,12 +50,15 @@
 
   const ASSISTANT_SELECTORS = {
     claude: [
+      '.prose',
       '[data-testid="assistant-message"]',
       '.font-claude-message',
       '[class*="AssistantMessage"]',
       '[class*="assistant-message"]',
       '[data-is-streaming]',
-      '.message-content[data-role="assistant"]'
+      '.message-content[data-role="assistant"]',
+      '.grid-cols-1',   // Common layout wrapper in new Claude UI
+      '.max-w-3xl'      // Common content constraint wrapper
     ],
     chatgpt: [
       '[data-message-author-role="assistant"]',
@@ -345,7 +345,8 @@
     const contextPatterns = [
       /`([\w][\w/\\\-.]*\.\w{1,10})`/,
       /\*\*([\w][\w/\\\-.]*\.\w{1,10})\*\*/,
-      /(?:file|path|filename)\s*[:=]\s*`?([\w][\w/\\\-.]*\.\w{1,10})`?/i,
+      /^[*\s]*([\w][\w/\\\-.]*\.\w{1,10})[*\s]*$/i,
+      /(?:(?:target|output)\s+)?(?:file\s*name|file|path|filename)\s*[:=]\s*`?([\w][\w/\\\-.]*\.\w{1,10})`?/i,
       /(?:create|update|modify|edit|change|write|save|replace|overwrite|add)\s+(?:the\s+)?(?:file\s+)?(?:called\s+|named\s+)?`?([\w][\w/\\\-.]*\.\w{1,10})`?/i,
       /(?:here[''\u2019]?s?|this is|the|your)\s+(?:the\s+)?(?:updated?\s+|modified?\s+|new\s+|complete\s+|full\s+|revised\s+|corrected\s+|fixed\s+)?`?([\w][\w/\\\-.]*\.\w{1,10})`?\s*[:\u2014-]/i,
       /\bin\s+`?([\w][\w/\\\-.]*\.\w{1,10})`?\s*[:.]?\s*$/i,
@@ -365,29 +366,17 @@
       return null;
     }
 
-    // Preceding siblings
-    let el = startEl.previousElementSibling;
-    for (let i = 0; i < 4 && el; i++, el = el.previousElementSibling) {
-      const result = searchElement(el);
-      if (result) return result;
-    }
-
-    // Parent's preceding siblings
-    if (startEl.parentElement) {
-      el = startEl.parentElement.previousElementSibling;
-      for (let i = 0; i < 3 && el; i++, el = el.previousElementSibling) {
+    // Walk up the DOM tree and check preceding siblings at each level
+    let current = startEl;
+    for (let depth = 0; depth < 6; depth++) {
+      if (!current) break;
+      let el = current.previousElementSibling;
+      for (let i = 0; i < 4 && el; i++) { // Check up to 4 preceding siblings per level
         const result = searchElement(el);
         if (result) return result;
+        el = el.previousElementSibling;
       }
-    }
-
-    // Grandparent's preceding siblings
-    if (startEl.parentElement?.parentElement) {
-      el = startEl.parentElement.parentElement.previousElementSibling;
-      for (let i = 0; i < 2 && el; i++, el = el.previousElementSibling) {
-        const result = searchElement(el);
-        if (result) return result;
-      }
+      current = current.parentElement;
     }
 
     return null;
@@ -469,58 +458,57 @@
     if (!autoSync) return;
 
     const selectors = ASSISTANT_SELECTORS[PLATFORM] || [];
-    let containers = [];
+    let pres = [];
 
+    // Find the first valid selector that actually contains code blocks
     for (const sel of selectors) {
       try {
-        const found = document.querySelectorAll(sel);
-        if (found.length > 0) { containers = [...found]; break; }
+        const containers = Array.from(document.querySelectorAll(sel));
+        const foundPres = containers.flatMap(c => Array.from(c.querySelectorAll('pre')));
+        if (foundPres.length > 0) {
+          pres = Array.from(new Set(foundPres)); // remove duplicates just in case
+          break;
+        }
       } catch (_) { }
     }
 
-    // Only scan the page if we found platform-specific containers.
-    // Falling back to a full-page scan risks picking up UI code blocks
-    // (e.g. sidebar, settings) as false positives.
-    if (containers.length === 0) return;
+    if (pres.length === 0) return;
 
-    containers.forEach(c => {
-      const pres = Array.from(c.querySelectorAll('pre'));
-      const skip = new Set();
+    const skip = new Set();
 
-      for (let i = 0; i < pres.length; i++) {
-        if (skip.has(pres[i])) continue;
+    for (let i = 0; i < pres.length; i++) {
+      if (skip.has(pres[i])) continue;
 
-        let pre1 = pres[i];
+      let pre1 = pres[i];
 
-        // Try pairing with the next block for ChatGPT's "Replace / with" diff pattern
-        if (i + 1 < pres.length) {
-          let pre2 = pres[i + 1];
-          try {
-            let range = document.createRange();
-            range.setStartAfter(pre1);
-            range.setEndBefore(pre2);
-            let between = range.toString().trim().toLowerCase();
+      // Try pairing with the next block for ChatGPT's "Replace / with" diff pattern
+      if (i + 1 < pres.length) {
+        let pre2 = pres[i + 1];
+        try {
+          let range = document.createRange();
+          range.setStartAfter(pre1);
+          range.setEndBefore(pre2);
+          let between = range.toString().trim().toLowerCase();
 
-            // Check text directly above the first block
-            let prevElText = (pre1.previousElementSibling && pre1.previousElementSibling.textContent ? pre1.previousElementSibling.textContent : '').trim().toLowerCase();
-            let prevNodeText = (pre1.previousSibling && pre1.previousSibling.textContent ? pre1.previousSibling.textContent : '').trim().toLowerCase();
+          // Check text directly above the first block
+          let prevElText = (pre1.previousElementSibling && pre1.previousElementSibling.textContent ? pre1.previousElementSibling.textContent : '').trim().toLowerCase();
+          let prevNodeText = (pre1.previousSibling && pre1.previousSibling.textContent ? pre1.previousSibling.textContent : '').trim().toLowerCase();
 
-            if (between === 'with' || between === 'with:') {
-              if (prevElText.endsWith('replace:') || prevElText.endsWith('replace') ||
-                prevNodeText.endsWith('replace:') || prevNodeText.endsWith('replace')) {
+          if (between === 'with' || between === 'with:') {
+            if (prevElText.endsWith('replace:') || prevElText.endsWith('replace') ||
+              prevNodeText.endsWith('replace:') || prevNodeText.endsWith('replace')) {
 
-                processSearchReplacePair(pre1, pre2);
-                skip.add(pre1);
-                skip.add(pre2);
-                continue;
-              }
+              processSearchReplacePair(pre1, pre2);
+              skip.add(pre1);
+              skip.add(pre2);
+              continue;
             }
-          } catch (e) { }
-        }
-
-        processBlock(pres[i].querySelector('code') || pres[i]);
+          }
+        } catch (e) { }
       }
-    });
+
+      processBlock(pres[i].querySelector('code') || pres[i]);
+    }
   }
 
   function processSearchReplacePair(pre1, pre2) {
@@ -566,7 +554,6 @@
     if (!filename) return;
 
     sentHashes.add(h);
-    chrome.storage.local.set({ synapseHashes: [...sentHashes].slice(-500) });
 
     sendToServer({
       type: 'code_block', timestamp: Date.now(),
@@ -613,7 +600,6 @@
 
 
     sentHashes.add(h);
-    chrome.storage.local.set({ synapseHashes: [...sentHashes].slice(-500) });
 
     // Detect SEARCH/REPLACE blocks
     const srBlocks = parseSearchReplaceBlocks(raw);
@@ -1085,7 +1071,11 @@
       btn.style.transform = 'scale(1) translateY(0)';
       btn.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05)';
     });
-    btn.addEventListener('click', () => openFilePicker());
+    btn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }).catch(() => {
+        // Fallback if openPopup not supported: open the extension options
+      });
+    });
 
     _synapseDomOp = true;
     document.documentElement.appendChild(btn);
@@ -1279,9 +1269,9 @@
   // ─── Keyboard shortcut: Ctrl+Shift+F ─────────────────────────────────────────
 
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
       e.preventDefault();
-      openFilePicker();
+      chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }).catch(() => { });
     }
   }, true);
 
@@ -1292,7 +1282,25 @@
       sendResponse({ connected: isConnected, platform: PLATFORM, autoSync, queueSize: pendingCode.length });
       return true;
     }
-    if (msg.type === 'SCAN_NOW') extractCodeBlocks();
+    if (msg.type === 'SCAN_NOW') { sentHashes.clear(); extractCodeBlocks(); }
+    if (msg.type === 'GET_FILE_TREE') {
+      sendResponse({ files: projectFiles, connected: isConnected });
+      return true;
+    }
+    if (msg.type === 'INJECT_FILE') {
+      const filename = msg.filename;
+      if (!filename) { sendResponse({ error: 'No filename' }); return; }
+      if (!isConnected || !ws || ws.readyState !== WebSocket.OPEN) {
+        sendResponse({ error: 'Not connected to server' }); return;
+      }
+      // Request file content from server, then inject into chat when it arrives
+      pendingFileCallback = (content, ext) => {
+        injectFileIntoChat(filename, content, ext);
+      };
+      ws.send(JSON.stringify({ type: 'request_file_content', filename }));
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg.type === 'UPDATE_PORT') {
       wsPort = msg.port;
       reconnectDelay = MIN_RECONNECT_DELAY;
@@ -1309,7 +1317,7 @@
         ws.send(JSON.stringify({ type: 'set_config', dryRun: msg.dryRun, gitBackup: msg.gitBackup }));
       }
     }
-    if (msg.type === 'CLEAR_CACHE') { sentHashes.clear(); chrome.storage.local.remove('synapseHashes'); }
+    if (msg.type === 'CLEAR_CACHE') { sentHashes.clear(); console.log('[Synapse] Hash cache cleared'); }
   });
 
   // ─── Page Visibility & Cleanup ─────────────────────────────────────────────
@@ -1346,15 +1354,13 @@
 
   // ─── Init ─────────────────────────────────────────────────────────────────────
 
-  chrome.storage.local.get(['wsPort', 'autoSync', 'synapseHashes'], (r) => {
+  chrome.storage.local.get(['wsPort', 'autoSync'], (r) => {
     if (r.wsPort) wsPort = r.wsPort;
     if (r.autoSync !== undefined) autoSync = r.autoSync;
-    if (Array.isArray(r.synapseHashes)) {
-      r.synapseHashes.forEach(h => sentHashes.add(h));
-      console.log(`[Synapse] Restored ${sentHashes.size} known hashes`);
-    }
+    // Hashes are NOT restored — each page session starts fresh so code blocks
+    // in the current conversation are always synced correctly.
     connectWebSocket();
-    console.log(`[Synapse] Connected on ${PLATFORM}`);
+    console.log(`[Synapse] Init on ${PLATFORM}`);
 
     // Delay DOM injections slightly to allow ChatGPT/React to finish hydrating.
     // Injecting nodes during hydration causes fatal React mismatches (stuck loading).
