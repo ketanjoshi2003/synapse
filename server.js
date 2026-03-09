@@ -264,19 +264,20 @@ function handleConfigUpdate(data, ws) {
 // ─── Confirmation Flow ────────────────────────────────────────────────────────
 
 function requestConfirmation(ws, filename, mode, preview, executeWrite, newCode) {
-  // Per-filename dedup: skip if a confirmation for this file is already pending or was recently handled
+  // Per-filename+mode dedup: skip only if a confirmation with the SAME mode for this file is already pending
+  const dedupKey = `${filename}::${mode}`;
   const now = Date.now();
-  const lastConfirm = recentConfirmFiles.get(filename);
+  const lastConfirm = recentConfirmFiles.get(dedupKey);
   if (lastConfirm && (now - lastConfirm) < CONFIRM_FILE_DEDUP_WINDOW) {
-    // Check if there's already an active confirmation for this file
+    // Check if there's already an active confirmation for this exact file+mode
     for (const [, pending] of pendingConfirmations) {
-      if (pending.filename === filename && pending.ws === ws) {
-        console.log(`\x1b[33m⏭️  Skipped duplicate confirmation for ${filename}\x1b[0m`);
+      if (pending.filename === filename && pending.mode === mode && pending.ws === ws) {
+        console.log(`\x1b[33m⏭️  Skipped duplicate confirmation for ${filename} (${mode})\x1b[0m`);
         return;
       }
     }
   }
-  recentConfirmFiles.set(filename, now);
+  recentConfirmFiles.set(dedupKey, now);
 
   const confirmId = ++confirmIdCounter;
 
@@ -691,10 +692,14 @@ function processCode(raw, hintFilename) {
 
 function parseSearchReplaceFromCode(body) {
   const blocks = [];
-  const regex = /<<<<<<<?[ \t]*SEARCH[ \t]*\n([\s\S]*?)\n={5,}\n([\s\S]*?)\n>>>>>>>?[ \t]*REPLACE/g;
+  const gitRegex = /<<<<<<<?[ \t]*SEARCH[ \t]*\n([\s\S]*?)\n={5,}\n([\s\S]*?)\n>>>>>>>?[ \t]*REPLACE/g;
   let m;
-  while ((m = regex.exec(body)) !== null) {
+  while ((m = gitRegex.exec(body)) !== null) {
     blocks.push({ find: m[1], replace: m[2] });
+  }
+  const aiRegex = /(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Find (?:this|code)[^]*?:\s*(?:-->|\*\/)?\s*\n)([\s\S]*?)(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Replace (?:with|code)[^]*?:\s*(?:-->|\*\/)?\s*\n)([\s\S]*?)(?=(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Find (?:this|code)[^]*?:)|$)/gi;
+  while ((m = aiRegex.exec(body)) !== null) {
+    blocks.push({ find: m[1].replace(/\n$/, ''), replace: m[2].replace(/\n$/, '') });
   }
   return blocks;
 }

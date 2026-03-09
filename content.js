@@ -419,10 +419,14 @@
 
   function parseSearchReplaceBlocks(code) {
     const blocks = [];
-    const regex = /<<<<<<<?[ \t]*SEARCH[ \t]*\n([\s\S]*?)\n={5,}\n([\s\S]*?)\n>>>>>>>?[ \t]*REPLACE/g;
+    const gitRegex = /<<<<<<<?[ \t]*SEARCH[ \t]*\n([\s\S]*?)\n={5,}\n([\s\S]*?)\n>>>>>>>?[ \t]*REPLACE/g;
     let m;
-    while ((m = regex.exec(code)) !== null) {
+    while ((m = gitRegex.exec(code)) !== null) {
       blocks.push({ find: m[1], replace: m[2] });
+    }
+    const aiRegex = /(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Find (?:this|code)[^]*?:\s*(?:-->|\*\/)?\s*\n)([\s\S]*?)(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Replace (?:with|code)[^]*?:\s*(?:-->|\*\/)?\s*\n)([\s\S]*?)(?=(?:(?:\/\/|#|--|\/\*|\*|<!--)\s*Find (?:this|code)[^]*?:)|$)/gi;
+    while ((m = aiRegex.exec(code)) !== null) {
+      blocks.push({ find: m[1].replace(/\n$/, ''), replace: m[2].replace(/\n$/, '') });
     }
     return blocks;
   }
@@ -583,19 +587,40 @@
     }
 
     const h = hash(raw);
-    if (sentHashes.has(h)) return;
+    if (sentHashes.has(h)) {
+      console.log(`[Synapse] ⏭️ Skipped (already sent): hash=${h}, preview="${raw.slice(0, 60)}..."`);
+      return;
+    }
 
     // Filename resolution chain (priority order)
-    let filename =
-      extractFilenameFromFence(block) ||
-      extractFilenameFromComment(raw) ||
-      extractFilenameFromDOM(block) ||
-      extractFilenameFromContext(block);
+    const fnFence = extractFilenameFromFence(block);
+    const fnComment = extractFilenameFromComment(raw);
+    const fnDOM = extractFilenameFromDOM(block);
+    const fnContext = extractFilenameFromContext(block);
+    let filename = fnFence || fnComment || fnDOM || fnContext;
 
-    if (!filename) return;
+    // Fallback: inherit filename from a recently processed block in the same message
+    if (!filename) {
+      const msg = block.closest('pre')?.closest('[data-testid], article, .agent-turn, [class*="message"], .prose, [class*="response"]');
+      if (msg && msg.__synapseLastFile) {
+        filename = msg.__synapseLastFile;
+        console.log(`[Synapse] 🔗 Inherited filename from same message: ${filename}`);
+      }
+    }
+
+    console.log(`[Synapse] 🔍 Block: "${raw.slice(0, 80)}..." | Fence=${fnFence} Comment=${fnComment} DOM=${fnDOM} Context=${fnContext}`);
+
+    if (!filename) {
+      console.log(`[Synapse] ❌ No filename found, skipping block`);
+      return;
+    }
 
     filename = resolveFilename(filename);
     if (!filename) return;
+
+    // Store filename on the message container so sibling blocks can inherit it
+    const msgContainer = block.closest('pre')?.closest('[data-testid], article, .agent-turn, [class*="message"], .prose, [class*="response"]');
+    if (msgContainer) msgContainer.__synapseLastFile = filename;
 
 
 
@@ -603,6 +628,7 @@
 
     // Detect SEARCH/REPLACE blocks
     const srBlocks = parseSearchReplaceBlocks(raw);
+    console.log(`[Synapse] 🔎 SR blocks found: ${srBlocks.length} for ${filename}`);
     if (srBlocks.length > 0) {
       sendToServer({
         type: 'code_block', timestamp: Date.now(),
