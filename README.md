@@ -6,7 +6,7 @@
 
 **The neural link between AI and your codebase.**
 
-Reads code blocks from AI chats and automatically creates, writes, updates, and patches files in your local project — like Claude Code, but for any AI.
+Reads code blocks from AI chats and automatically creates, writes, updates, and patches files in your local project 
 
 Works with **Claude**, **ChatGPT**, **Gemini**, **DeepSeek**, **Copilot**, **Grok**, **Poe**, **Mistral**, and **HuggingFace Chat**.
 
